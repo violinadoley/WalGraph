@@ -5,7 +5,7 @@ compiled_package_info:
     std: "0000000000000000000000000000000000000000000000000000000000000001"
     sui: "0000000000000000000000000000000000000000000000000000000000000002"
     webwalrus_graph: "0000000000000000000000000000000000000000000000000000000000000000"
-  source_digest: B7F3389D123434375421B9FEE423A265851543A13C0347A987088C12CF32F1DA
+  source_digest: 0978EBED06EAC1A0D7449D5A248F5EAA8F7AEAB59DFFEF837CAE18F258C5790F
   build_flags:
     dev_mode: false
     test_mode: false
@@ -13,7 +13,7 @@ compiled_package_info:
     save_disassembly: false
     install_dir: ~
     force_recompilation: false
-    lock_file: ".\\Move.lock"
+    lock_file: "./Move.lock"
     fetch_deps_only: false
     skip_fetch_latest_git_deps: false
     default_flavor: sui
@@ -26,13 +26,14 @@ compiled_package_info:
     lint_flag:
       no_lint: false
       lint: false
+    modes: []
     implicit_dependencies:
       Bridge:
         Internal:
           kind:
             Git:
               git_url: "https://github.com/MystenLabs/sui.git"
-              git_rev: 6a2fc3c8f555
+              git_rev: 2c930c25f8d3
               subdir: crates/sui-framework/packages/bridge
           subst: ~
           digest: ~
@@ -42,7 +43,7 @@ compiled_package_info:
           kind:
             Git:
               git_url: "https://github.com/MystenLabs/sui.git"
-              git_rev: 6a2fc3c8f555
+              git_rev: 2c930c25f8d3
               subdir: crates/sui-framework/packages/move-stdlib
           subst: ~
           digest: ~
@@ -52,7 +53,7 @@ compiled_package_info:
           kind:
             Git:
               git_url: "https://github.com/MystenLabs/sui.git"
-              git_rev: 6a2fc3c8f555
+              git_rev: 2c930c25f8d3
               subdir: crates/sui-framework/packages/sui-framework
           subst: ~
           digest: ~
@@ -62,11 +63,12 @@ compiled_package_info:
           kind:
             Git:
               git_url: "https://github.com/MystenLabs/sui.git"
-              git_rev: 6a2fc3c8f555
+              git_rev: 2c930c25f8d3
               subdir: crates/sui-framework/packages/sui-system
           subst: ~
           digest: ~
           dep_override: true
+    force_lock_file: false
 dependencies:
   - MoveStdlib
   - Sui

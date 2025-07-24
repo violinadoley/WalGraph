@@ -1,0 +1,18 @@
+[
+  {
+    "userId": "alice",
+    "name": "Test Graph",
+    "description": "A test graph",
+    "blobId": "kmBd8Y4S_lydQ5-Nw7A_U0O3bp6a4zHFTTM5qdZsRss",
+    "graphId": "mock-graph-id-1753388178720",
+    "timestamp": 1753388178720
+  },
+  {
+    "userId": "vio",
+    "name": "My Graph",
+    "description": "A sample graph database",
+    "blobId": "Pbd3q9qzwZTSwirmYDOA2kXRz4pziN5r-urXi1Qmc34",
+    "graphId": "mock-graph-id-1753388222221",
+    "timestamp": 1753388222221
+  }
+]

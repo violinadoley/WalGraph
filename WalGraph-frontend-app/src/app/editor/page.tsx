@@ -48,6 +48,7 @@ import {
 import Link from 'next/link';
 import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
+import { createGraph, fetchGraphByBlobId, listSavedGraphs, deleteSavedGraph, updateGraph, getUserId } from '@/services/api-service';
 
 // Dynamically import Monaco Editor
 const Editor = dynamic(() => import('@monaco-editor/react'), { 
@@ -395,6 +396,24 @@ export default function GraphEditorPage() {
   const [loadForm, setLoadForm] = useState({
     blobId: ''
   });
+
+  // State for saved graphs
+  const [savedGraphs, setSavedGraphs] = useState<Array<{
+    name: string;
+    description: string;
+    blobId: string;
+    graphId: string;
+    tags?: string[];
+    timestamp: number;
+  }>>([]);
+
+  // State for editing a graph
+  const [editGraph, setEditGraph] = useState<null | {
+    graphId: string;
+    name: string;
+    description: string;
+    tags: string;
+  }>(null);
 
   const showSuccess = useCallback((message: string) => {
     console.log('✅', message);
@@ -1300,34 +1319,27 @@ export default function GraphEditorPage() {
         tags: tags
       });
 
-      // Create a wrapper to capture transaction info
-      let transactionDigest = '';
-      const signAndExecuteWithCapture = async (params: unknown): Promise<unknown> => {
-        const result = await signAndExecute(params);
-        // Capture the transaction digest from the result
-        if (result && typeof result === 'object' && 'digest' in result) {
-          transactionDigest = (result as { digest: string }).digest;
-        }
-        return result;
-      };
-
-      const result = await graphService.saveGraph({
+      // Instead of using graphService.saveGraph, use the API service
+      const graphData = {
         name: saveForm.name,
         description: saveForm.description,
+        nodeCount: state.nodes.length,
+        relationshipCount: state.relationships.length,
         isPublic: saveForm.isPublic,
-        tags
-      }, 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      signAndExecuteWithCapture as any);
+        tags: tags,
+        nodes: state.nodes,
+        relationships: state.relationships
+      };
+      const result = await createGraph(graphData);
 
       console.log('🎉 Graph save completed:', result);
-      showSuccess(`Graph saved! Blob ID: ${result.blobId}`);
+      showSuccess(`Graph saved! Graph ID: ${result.graphId}`);
 
       setState(prev => ({
         ...prev,
         savedGraphInfo: {
-          blobId: result.blobId,
-          transactionDigest: transactionDigest,
+          blobId: result.blobId || '',
+          transactionDigest: '', // Not available from API mock
           timestamp: new Date().toISOString(),
           name: saveForm.name
         }
@@ -1344,12 +1356,16 @@ export default function GraphEditorPage() {
   const loadGraph = async (blobId: string) => {
     try {
       setState(prev => ({ ...prev, isLoading: true }));
-      await graphService.loadGraph(blobId);
-      updateState();
+      const data = await fetchGraphByBlobId(blobId);
+      setState(prev => ({
+        ...prev,
+        nodes: data.nodes || [],
+        relationships: data.relationships || [],
+        isLoading: false
+      }));
       showSuccess('Graph loaded successfully');
     } catch (error) {
       showError(`Failed to load graph: ${error}`);
-    } finally {
       setState(prev => ({ ...prev, isLoading: false }));
     }
   };
@@ -2300,6 +2316,60 @@ export default function GraphEditorPage() {
     setEnableRealTimeUpdates(false);
     console.log('📵 Real-time updates disabled');
   }, [eventSubscription]);
+
+  // Fetch saved graphs when Browse tab is active
+  useEffect(() => {
+    if (activeTab === 'browse') {
+      listSavedGraphs()
+        .then(data => setSavedGraphs(Array.isArray(data) ? data : []))
+        .catch(() => setSavedGraphs([]));
+    }
+  }, [activeTab]);
+
+  // Delete a saved graph and update the list
+  const handleDeleteGraph = async (graphId: string) => {
+    try {
+      await deleteSavedGraph(graphId);
+      setSavedGraphs(prev => prev.filter(g => g.graphId !== graphId));
+      showSuccess('Graph deleted');
+    } catch (error) {
+      showError(`Failed to delete graph: ${error}`);
+    }
+  };
+
+  // Change user and refresh saved graphs
+  const handleChangeUser = () => {
+    const newUserId = prompt('Enter a new username:') || '';
+    if (newUserId) {
+      localStorage.setItem('walgraph_userId', newUserId);
+      // Refresh saved graphs for the new user
+      listSavedGraphs().then(setSavedGraphs).catch(() => setSavedGraphs([]));
+      showSuccess(`Switched to user: ${newUserId}`);
+    }
+  };
+
+  // Handle edit form submit
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editGraph) return;
+    try {
+      await updateGraph(editGraph.graphId, {
+        name: editGraph.name,
+        description: editGraph.description,
+        tags: editGraph.tags.split(',').map(t => t.trim()).filter(Boolean),
+      });
+      setEditGraph(null);
+      listSavedGraphs().then(setSavedGraphs).catch(() => setSavedGraphs([]));
+      showSuccess('Graph updated');
+    } catch (error) {
+      showError(`Failed to update graph: ${error}`);
+    }
+  };
+
+  useEffect(() => {
+    // Ensure userId is set on app load
+    getUserId();
+  }, []);
 
   return (
     <div className="h-screen bg-gray-950 text-white flex flex-col">
@@ -4086,6 +4156,53 @@ export default function GraphEditorPage() {
                       )}
                     </div>
                   )}
+
+                  {/* Saved Graphs Section */}
+                  {activeTab === 'browse' && (
+                    <div className="p-4">
+                      <h2 className="text-lg font-bold mb-2">Saved Graphs</h2>
+                      {(!Array.isArray(savedGraphs) || savedGraphs.length === 0) ? (
+                        <div className="text-gray-400">No saved graphs found.</div>
+                      ) : (
+                        <ul className="space-y-2">
+                          {(Array.isArray(savedGraphs) ? savedGraphs : []).map((g) => (
+                            <li key={g.graphId} className="border rounded p-2 flex items-center justify-between">
+                              <div>
+                                <div className="font-semibold">{g.name}</div>
+                                <div className="text-xs text-gray-500">Blob ID: {g.blobId}</div>
+                                <div className="text-xs text-gray-500">Saved: {new Date(g.timestamp).toLocaleString()}</div>
+                              </div>
+                              <div className="flex space-x-2">
+                                <button
+                                  className="ml-4 px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                                  onClick={() => loadGraph(g.blobId)}
+                                >
+                                  Load
+                                </button>
+                                <button
+                                  className="ml-2 px-2 py-1 bg-yellow-600 text-white rounded hover:bg-yellow-700"
+                                  onClick={() => setEditGraph({
+                                    graphId: g.graphId,
+                                    name: g.name,
+                                    description: g.description,
+                                    tags: Array.isArray(g.tags) ? g.tags.join(',') : ''
+                                  })}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  className="ml-2 px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700"
+                                  onClick={() => handleDeleteGraph(g.graphId)}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -4178,6 +4295,28 @@ export default function GraphEditorPage() {
           </aside>
         </div>
       </div>
+
+      {/* Edit Graph Modal */}
+      {editGraph && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+          <form className="bg-white rounded p-6 w-96" onSubmit={handleEditSubmit}>
+            <h2 className="text-lg font-bold mb-4">Edit Graph</h2>
+            <label className="block mb-2">Name
+              <input className="w-full border rounded px-2 py-1" value={editGraph.name} onChange={e => setEditGraph(g => g && { ...g, name: e.target.value })} />
+            </label>
+            <label className="block mb-2">Description
+              <input className="w-full border rounded px-2 py-1" value={editGraph.description} onChange={e => setEditGraph(g => g && { ...g, description: e.target.value })} />
+            </label>
+            <label className="block mb-4">Tags (comma separated)
+              <input className="w-full border rounded px-2 py-1" value={editGraph.tags} onChange={e => setEditGraph(g => g && { ...g, tags: e.target.value })} />
+            </label>
+            <div className="flex justify-end space-x-2">
+              <button type="button" className="px-3 py-1 bg-gray-300 rounded" onClick={() => setEditGraph(null)}>Cancel</button>
+              <button type="submit" className="px-3 py-1 bg-blue-600 text-white rounded">Save</button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
