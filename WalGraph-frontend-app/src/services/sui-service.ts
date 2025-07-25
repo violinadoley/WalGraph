@@ -20,7 +20,7 @@ type ObjectChange = {
   [key: string]: unknown;
 };
 
-type SignAndExecuteFunction = (params: {
+export type SignAndExecuteFunction = (params: {
   transaction: Transaction;
   options?: {
     showEffects?: boolean;

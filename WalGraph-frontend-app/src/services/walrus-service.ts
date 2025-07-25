@@ -179,7 +179,7 @@ export class WalrusService {
     const encoder = new TextEncoder();
     const arrayBuffer = encoder.encode(jsonString);
 
-    const url = `${this.config.publisherUrl}/v1/blobs`;
+    const url = `${this.config.publisherUrl}/v1/blobs?deletable=true`;
     console.log('🔄 Attempting to store at URL:', url);
     console.log('🔄 Data size:', arrayBuffer.length, 'bytes');
 
@@ -556,6 +556,30 @@ export class WalrusService {
       };
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Delete blob data from Walrus
+   */
+  async deleteBlob(blobId: string): Promise<boolean> {
+    // Handle localStorage blobs
+    if (blobId.startsWith('local_')) {
+      try {
+        localStorage.removeItem(`walrus_blob_${blobId}`);
+        return true;
+      } catch (error) {
+        console.error('Failed to delete local blob:', error);
+        return false;
+      }
+    }
+    const url = `${this.config.publisherUrl}/v1/blobs/${blobId}`;
+    try {
+      const response = await fetch(url, { method: 'DELETE' });
+      return response.ok;
+    } catch (error) {
+      console.error('Failed to delete Walrus blob:', error);
+      return false;
     }
   }
 } 

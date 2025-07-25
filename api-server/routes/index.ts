@@ -35,7 +35,15 @@ const savedGraphs: Array<{
   graphId: string;
   tags?: string[];
   timestamp: number;
-}> = loadSavedGraphsFromFile();
+  nodeCount: number;
+  relationshipCount: number;
+  isPublic: boolean;
+}> = loadSavedGraphsFromFile().map((g: any) => ({
+  ...g,
+  nodeCount: typeof g.nodeCount === 'number' ? g.nodeCount : 0,
+  relationshipCount: typeof g.relationshipCount === 'number' ? g.relationshipCount : 0,
+  isPublic: typeof g.isPublic === 'boolean' ? g.isPublic : false,
+}));
 
 const graphSchema = z.object({
   userId: z.string().min(1),
@@ -239,9 +247,8 @@ router.get('/api/graphs/:id', async (req: Request, res: Response) => {
 router.put('/api/graphs/:id', requireApiKey, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { userId, name, description, tags } = req.body;
-    if (!userId) return res.status(400).json({ error: 'Missing userId' });
-    const graph = savedGraphs.find(g => g.graphId === id && g.userId === userId);
+    const { name, description, tags } = req.body;
+    const graph = savedGraphs.find(g => g.graphId === id);
     if (!graph) {
       return res.status(404).json({ error: 'Graph not found' });
     }
@@ -352,41 +359,21 @@ router.post('/api/graphs', requireApiKey, async (req: Request, res: Response) =>
     const walrusResult = await walrusService.storeGraph(nodes, relationships, { name, description });
     const blobId = walrusResult.blobId;
 
-    // For now, require signAndExecute in the request (to be replaced with wallet or backend signing)
-    let signAndExecute = req.body.signAndExecute;
-    if (!signAndExecute) {
-      // Mock signAndExecute for testing
-      signAndExecute = async () => ({
-        effects: { status: { status: 'success' } },
-        objectChanges: [
-          { type: 'created', objectType: 'GraphMetadata', objectId: 'mock-graph-id-' + Date.now(), version: 1 }
-        ]
-      });
-    }
-
-    // Register graph metadata on Sui
-    const graphId = await suiGraphService.createGraphMetadata({
-      name,
-      description,
-      blobId,
-      nodeCount,
-      relationshipCount,
-      isPublic,
-      tags,
-    }, signAndExecute);
-
-    // Store metadata in memory
+    // Store metadata in memory only (blockchain handled in frontend)
     savedGraphs.push({
       userId,
       name,
       description,
       blobId,
-      graphId,
-      timestamp: Date.now()
+      graphId: 'local-' + Date.now(),
+      tags,
+      timestamp: Date.now(),
+      nodeCount,
+      relationshipCount,
+      isPublic,
     });
     saveSavedGraphsToFile(savedGraphs);
-
-    res.status(201).json({ graphId, blobId });
+    res.status(201).json({ graphId: 'local-' + Date.now(), blobId });
   } catch (error) {
     res.status(500).json({ error: (error as Error).message });
   }

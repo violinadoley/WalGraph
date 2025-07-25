@@ -18,7 +18,8 @@ import {
   GraphNode,
   GraphRelationship,
   QueryResult,
-  GraphStats
+  GraphStats,
+  TransactionResult
 } from '@/services/types';
 import {
   Play,
@@ -50,6 +51,7 @@ import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
 import { createGraph, fetchGraphByBlobId, listSavedGraphs, deleteSavedGraph, updateGraph } from '@/services/api-service';
 import OnboardingModal from '@/components/OnboardingModal';
+import type { SignAndExecuteFunction } from '@/services/sui-service';
 
 // Dynamically import Monaco Editor
 const Editor = dynamic(() => import('@monaco-editor/react'), { 
@@ -262,27 +264,21 @@ export default function GraphEditorPage() {
   });
 
   // Create a proper signAndExecute function for the SUI service
-  const signAndExecute = (params: unknown): Promise<unknown> => {
-    return new Promise((resolve, reject) => {
+  const signAndExecute: SignAndExecuteFunction = (params) => {
+    return new Promise<TransactionResult>((resolve, reject) => {
       console.log('🔄 Wallet: Executing transaction...', params);
-      
       // Cast params to TransactionParams since we know the structure
-      const transactionParams = params as TransactionParams;
-      
+      const transactionParams = params as any;
       signAndExecuteTransaction(
         {
-          transaction: transactionParams.transaction as Transaction,
-          chain: 'sui:testnet', // Specify the chain
+          transaction: transactionParams.transaction,
+          chain: 'sui:testnet',
         },
         {
           onSuccess: (result) => {
-            console.log('✅ Wallet: Transaction successful:', result);
-            console.log('📋 Object changes:', result.objectChanges);
-            console.log('🔗 Transaction digest:', result.digest);
-            resolve(result);
+            resolve(result as TransactionResult);
           },
           onError: (error) => {
-            console.error('❌ Wallet: Transaction failed:', error);
             reject(error);
           },
         }
@@ -1309,49 +1305,57 @@ export default function GraphEditorPage() {
       return;
     }
 
-    console.log('🔗 Wallet connected:', currentAccount.address);
-    console.log('💾 Starting graph save process...');
+    setState(prev => ({ ...prev, isLoading: true }));
 
     try {
-      setState(prev => ({ ...prev, isLoading: true }));
-
       const tags = saveForm.tags.split(',').map(t => t.trim()).filter(Boolean);
 
-      console.log('📊 Save parameters:', {
+      // 1. Store graph data in Walrus
+      const walrusResult = await walrusService.storeGraph(state.nodes, state.relationships, {
         name: saveForm.name,
         description: saveForm.description,
-        isPublic: saveForm.isPublic,
-        tags: tags
       });
+      const blobId = walrusResult.blobId;
 
-      // Instead of using graphService.saveGraph, use the API service
-      const graphData = {
+      // 2. Prompt wallet to sign and submit SUI transaction
+      const graphId = await suiService.createGraphMetadata(
+        {
+          name: saveForm.name,
+          description: saveForm.description,
+          blobId,
+          nodeCount: state.nodes.length,
+          relationshipCount: state.relationships.length,
+          isPublic: saveForm.isPublic,
+          tags,
+        },
+        signAndExecute // This triggers the wallet prompt!
+      );
+
+      // 3. (Optional) Notify backend for off-chain indexing
+      await createGraph({
         name: saveForm.name,
         description: saveForm.description,
         nodeCount: state.nodes.length,
         relationshipCount: state.relationships.length,
         isPublic: saveForm.isPublic,
-        tags: tags,
+        tags,
         nodes: state.nodes,
-        relationships: state.relationships
-      };
-      const result = await createGraph(graphData, currentAccount.address || 'defaultUser');
+        relationships: state.relationships,
+        blobId,
+        graphId,
+      }, currentAccount.address);
 
-      console.log('🎉 Graph save completed:', result);
-      showSuccess(`Graph saved! Graph ID: ${result.graphId}`);
-
+      showSuccess(`Graph saved on-chain! Graph ID: ${graphId}`);
       setState(prev => ({
         ...prev,
         savedGraphInfo: {
-          blobId: result.blobId || '',
-          transactionDigest: '', // Not available from API mock
+          blobId,
+          transactionDigest: '', // You can get this from the SUI result if needed
           timestamp: new Date().toISOString(),
           name: saveForm.name
         }
       }));
-
     } catch (error) {
-      console.error('💥 Graph save failed:', error);
       showError(`Failed to save graph: ${error}`);
     } finally {
       setState(prev => ({ ...prev, isLoading: false }));
