@@ -1,18 +1,8 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || 'supersecretkey123';
 
-export function getUserId() {
-  let userId = localStorage.getItem('walgraph_userId');
-  if (!userId) {
-    userId = prompt('Enter a username (for demo):') || '';
-    localStorage.setItem('walgraph_userId', userId);
-  }
-  return userId;
-}
-
-export async function createGraph(graphData: any) {
+export async function createGraph(graphData: any, userId: string) {
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
-  const userId = getUserId();
   const response = await fetch(`${API_BASE_URL}/api/graphs`, {
     method: 'POST',
     headers: {
@@ -56,9 +46,8 @@ export async function listGraphs() {
   return response.json();
 }
 
-export async function listSavedGraphs() {
+export async function listSavedGraphs(userId: string) {
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
-  const userId = getUserId();
   const response = await fetch(`${API_BASE_URL}/api/graphs?userId=${encodeURIComponent(userId)}`);
   return response.json();
 }

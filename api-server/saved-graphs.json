@@ -14,5 +14,13 @@
     "blobId": "Pbd3q9qzwZTSwirmYDOA2kXRz4pziN5r-urXi1Qmc34",
     "graphId": "mock-graph-id-1753388222221",
     "timestamp": 1753388222221
+  },
+  {
+    "userId": "0x6047289b7a2cc0f2abfdf0321ee6debd7ae85167cb1dbee8fe38c390b87b387d",
+    "name": "My Graph",
+    "description": "A sample graph database",
+    "blobId": "TtshIjNeamJVwZ1XR2EulHWTGRl1qDX8VOi2j0kqokc",
+    "graphId": "mock-graph-id-1753433827994",
+    "timestamp": 1753433827994
   }
 ]

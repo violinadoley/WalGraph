@@ -48,7 +48,8 @@ import {
 import Link from 'next/link';
 import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
-import { createGraph, fetchGraphByBlobId, listSavedGraphs, deleteSavedGraph, updateGraph, getUserId } from '@/services/api-service';
+import { createGraph, fetchGraphByBlobId, listSavedGraphs, deleteSavedGraph, updateGraph } from '@/services/api-service';
+import OnboardingModal from '@/components/OnboardingModal';
 
 // Dynamically import Monaco Editor
 const Editor = dynamic(() => import('@monaco-editor/react'), { 
@@ -232,6 +233,10 @@ interface DownloadFormat {
 }
 
 export default function GraphEditorPage() {
+  // Onboarding state (move to top)
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [username, setUsername] = useState<string | null>(null);
+
   // Refs for D3
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1330,7 +1335,7 @@ export default function GraphEditorPage() {
         nodes: state.nodes,
         relationships: state.relationships
       };
-      const result = await createGraph(graphData);
+      const result = await createGraph(graphData, currentAccount.address || 'defaultUser');
 
       console.log('🎉 Graph save completed:', result);
       showSuccess(`Graph saved! Graph ID: ${result.graphId}`);
@@ -2320,11 +2325,11 @@ export default function GraphEditorPage() {
   // Fetch saved graphs when Browse tab is active
   useEffect(() => {
     if (activeTab === 'browse') {
-      listSavedGraphs()
+      listSavedGraphs(username || currentAccount?.address || 'defaultUser')
         .then(data => setSavedGraphs(Array.isArray(data) ? data : []))
         .catch(() => setSavedGraphs([]));
     }
-  }, [activeTab]);
+  }, [activeTab, username, currentAccount]);
 
   // Delete a saved graph and update the list
   const handleDeleteGraph = async (graphId: string) => {
@@ -2343,7 +2348,7 @@ export default function GraphEditorPage() {
     if (newUserId) {
       localStorage.setItem('walgraph_userId', newUserId);
       // Refresh saved graphs for the new user
-      listSavedGraphs().then(setSavedGraphs).catch(() => setSavedGraphs([]));
+      listSavedGraphs(newUserId).then(setSavedGraphs).catch(() => setSavedGraphs([]));
       showSuccess(`Switched to user: ${newUserId}`);
     }
   };
@@ -2359,1964 +2364,1994 @@ export default function GraphEditorPage() {
         tags: editGraph.tags.split(',').map(t => t.trim()).filter(Boolean),
       });
       setEditGraph(null);
-      listSavedGraphs().then(setSavedGraphs).catch(() => setSavedGraphs([]));
+      listSavedGraphs(username || currentAccount?.address || 'defaultUser').then(setSavedGraphs).catch(() => setSavedGraphs([]));
       showSuccess('Graph updated');
     } catch (error) {
       showError(`Failed to update graph: ${error}`);
     }
   };
 
+  // Check onboarding requirements on mount and when wallet changes
   useEffect(() => {
-    // Ensure userId is set on app load
-    getUserId();
-  }, []);
+    const storedUsername = localStorage.getItem('walgraph_userId');
+    const validUsername = storedUsername && /^[a-zA-Z0-9_]{3,20}$/.test(storedUsername);
+    if (!currentAccount || !validUsername) {
+      setOnboardingOpen(true);
+      setUsername(null);
+    } else {
+      setOnboardingOpen(false);
+      setUsername(storedUsername);
+    }
+  }, [currentAccount]);
+
+  // Handler for onboarding completion
+  const handleOnboardingComplete = (uname: string) => {
+    setUsername(uname);
+    setOnboardingOpen(false);
+  };
 
   return (
-    <div className="h-screen bg-gray-950 text-white flex flex-col">
-      {/* Top Header Bar */}
-      <header className="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          <Link href="/" className="flex items-center space-x-2">
-            <ArrowLeft className="w-5 h-5 text-gray-400 hover:text-white transition-colors" />
-            <span className="text-sm text-gray-400 hover:text-white transition-colors">Back to Home</span>
-          </Link>
-          <div className="h-6 w-px bg-gray-700"></div>
-          <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
-            WalGraph Editor
-          </h1>
-        </div>
-
-        <div className="flex items-center space-x-4">
-          <ConnectButton />
-          {state.savedGraphInfo && (
-            <div className="text-xs bg-gray-800 border border-green-700 px-3 py-2 rounded-lg">
-              <div className="text-green-400 font-medium">✅ Saved to Walrus</div>
-              <div className="text-gray-400">Blob: <span className="font-mono text-cyan-400">{state.savedGraphInfo.blobId.slice(0, 8)}...</span></div>
-            </div>
-          )}
-          <div className="text-sm bg-gray-800 border border-gray-700 px-3 py-2 rounded-lg">
-            <div className="flex space-x-4">
-              <span>Nodes: <span className="text-cyan-400 font-medium">{state.stats?.nodeCount || 0}</span></span>
-              <span>Relationships: <span className="text-purple-400 font-medium">{state.stats?.relationshipCount || 0}</span></span>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Layout */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left Sidebar Navigation */}
-        <aside className="w-64 bg-gray-900 border-r border-gray-800 flex flex-col">
-          {/* Navigation Header */}
-          <div className="p-4 border-b border-gray-800">
-            <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">Graph Tools</h2>
-          </div>
-
-          {/* Navigation Menu */}
-          <nav className="flex-1 p-2">
-            <div className="space-y-1">
-              <button
-                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-left transition-colors ${
-                  activeTab === 'create' 
-                    ? 'bg-cyan-600 text-white' 
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                }`}
-                onClick={() => setActiveTab('create')}
-              >
-                <Plus className="w-5 h-5" />
-                <span className="font-medium">Create</span>
-              </button>
-
-              <button
-                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-left transition-colors ${
-                  activeTab === 'query' 
-                    ? 'bg-cyan-600 text-white' 
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                }`}
-                onClick={() => setActiveTab('query')}
-              >
-                <Search className="w-5 h-5" />
-                <span className="font-medium">Query</span>
-              </button>
-
-              <button
-                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-left transition-colors ${
-                  activeTab === 'stats' 
-                    ? 'bg-cyan-600 text-white' 
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                }`}
-                onClick={() => setActiveTab('stats')}
-              >
-                <BarChart3 className="w-5 h-5" />
-                <span className="font-medium">Analytics</span>
-              </button>
-
-              <button
-                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-left transition-colors ${
-                  activeTab === 'import' 
-                    ? 'bg-cyan-600 text-white' 
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                }`}
-                onClick={() => setActiveTab('import')}
-              >
-                <Upload className="w-5 h-5" />
-                <span className="font-medium">Import</span>
-              </button>
-
-              <button
-                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-left transition-colors ${
-                  activeTab === 'save' 
-                    ? 'bg-cyan-600 text-white' 
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                }`}
-                onClick={() => setActiveTab('save')}
-              >
-                <Database className="w-5 h-5" />
-                <span className="font-medium">Save & Share</span>
-              </button>
-
-              <button
-                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-left transition-colors ${
-                  activeTab === 'browse' 
-                    ? 'bg-cyan-600 text-white' 
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                }`}
-                onClick={() => setActiveTab('browse')}
-              >
-                <Globe className="w-5 h-5" />
-                <span className="font-medium">Browse</span>
-              </button>
+    <>
+      <OnboardingModal
+        open={onboardingOpen}
+        onComplete={handleOnboardingComplete}
+        currentAccount={currentAccount}
+      />
+      {/* Block editor interaction if onboarding is open */}
+      <div className={onboardingOpen ? 'pointer-events-none opacity-40 select-none' : ''}>
+        <div className="h-screen bg-gray-950 text-white flex flex-col">
+          {/* Top Header Bar */}
+          <header className="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <Link href="/" className="flex items-center space-x-2">
+                <ArrowLeft className="w-5 h-5 text-gray-400 hover:text-white transition-colors" />
+                <span className="text-sm text-gray-400 hover:text-white transition-colors">Back to Home</span>
+              </Link>
+              <div className="h-6 w-px bg-gray-700"></div>
+              <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
+                WalGraph Editor
+              </h1>
             </div>
 
-            {/* Quick Actions Section */}
-            <div className="mt-8 pt-4 border-t border-gray-800">
-              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Quick Actions</h3>
-              <div className="space-y-2">
-                <button
-                  onClick={createSampleData}
-                  className="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
-                >
-                  <Database className="w-4 h-4" />
-                  <span>Sample Data</span>
-                </button>
-                <button
-                  onClick={analyzeGraph}
-                  className="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
-                >
-                  <BarChart3 className="w-4 h-4" />
-                  <span>Run Analysis</span>
-                </button>
+            <div className="flex items-center space-x-4">
+              <ConnectButton />
+              {state.savedGraphInfo && (
+                <div className="text-xs bg-gray-800 border border-green-700 px-3 py-2 rounded-lg">
+                  <div className="text-green-400 font-medium">✅ Saved to Walrus</div>
+                  <div className="text-gray-400">Blob: <span className="font-mono text-cyan-400">{state.savedGraphInfo.blobId.slice(0, 8)}...</span></div>
+                </div>
+              )}
+              <div className="text-sm bg-gray-800 border border-gray-700 px-3 py-2 rounded-lg">
+                <div className="flex space-x-4">
+                  <span>Nodes: <span className="text-cyan-400 font-medium">{state.stats?.nodeCount || 0}</span></span>
+                  <span>Relationships: <span className="text-purple-400 font-medium">{state.stats?.relationshipCount || 0}</span></span>
+                </div>
               </div>
             </div>
-          </nav>
-        </aside>
+          </header>
 
-        {/* Main Content Area */}
-        <div className="flex-1 flex">
-          {/* Active Panel Content */}
-          <div className="w-80 bg-gray-950 border-r border-gray-800 flex flex-col">
-            <div className="p-4 border-b border-gray-800">
-              <h2 className="text-lg font-semibold text-white">
-                {activeTab === 'create' && 'Create Elements'}
-                {activeTab === 'query' && 'Graph Query'}
-                {activeTab === 'stats' && 'Graph Analytics'}
-                {activeTab === 'import' && 'Data Import'}
-                {activeTab === 'save' && 'Save & Share'}
-                {activeTab === 'browse' && 'Browse Graphs'}
-              </h2>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto p-4">
-              {activeTab === 'create' && (
-                <div className="space-y-6">
-                  {/* Create Node Section */}
-                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <h3 className="text-md font-semibold text-white mb-4 flex items-center">
-                      <Plus className="w-4 h-4 mr-2" />
-                      Create Node
-                    </h3>
-                    <label htmlFor="nodeType" className="block text-sm font-medium text-gray-300 mb-1">Type</label>
-                    <input
-                      type="text"
-                      id="nodeType"
-                      value={createForm.nodeType}
-                      onChange={(e) => setCreateForm({ ...createForm, nodeType: e.target.value })}
-                      placeholder="e.g., Person, Company"
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none mb-3"
-                    />
-                    <label htmlFor="nodeProps" className="block text-sm font-medium text-gray-300 mb-1">Properties (JSON)</label>
-                    <textarea
-                      id="nodeProps"
-                      value={createForm.nodeProps}
-                      onChange={(e) => setCreateForm({ ...createForm, nodeProps: e.target.value })}
-                      rows={3}
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none mb-3 resize-y"
-                      placeholder='{"name": "Jane Doe", "age": 42}'
-                    ></textarea>
+          {/* Main Layout */}
+          <div className="flex flex-1 overflow-hidden">
+            {/* Left Sidebar Navigation */}
+            <aside className="w-64 bg-gray-900 border-r border-gray-800 flex flex-col">
+              {/* Navigation Header */}
+              <div className="p-4 border-b border-gray-800">
+                <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">Graph Tools</h2>
+              </div>
+
+              {/* Navigation Menu */}
+              <nav className="flex-1 p-2">
+                <div className="space-y-1">
+                  <button
+                    className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-left transition-colors ${
+                      activeTab === 'create' 
+                        ? 'bg-cyan-600 text-white' 
+                        : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                    }`}
+                    onClick={() => setActiveTab('create')}
+                  >
+                    <Plus className="w-5 h-5" />
+                    <span className="font-medium">Create</span>
+                  </button>
+
+                  <button
+                    className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-left transition-colors ${
+                      activeTab === 'query' 
+                        ? 'bg-cyan-600 text-white' 
+                        : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                    }`}
+                    onClick={() => setActiveTab('query')}
+                  >
+                    <Search className="w-5 h-5" />
+                    <span className="font-medium">Query</span>
+                  </button>
+
+                  <button
+                    className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-left transition-colors ${
+                      activeTab === 'stats' 
+                        ? 'bg-cyan-600 text-white' 
+                        : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                    }`}
+                    onClick={() => setActiveTab('stats')}
+                  >
+                    <BarChart3 className="w-5 h-5" />
+                    <span className="font-medium">Analytics</span>
+                  </button>
+
+                  <button
+                    className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-left transition-colors ${
+                      activeTab === 'import' 
+                        ? 'bg-cyan-600 text-white' 
+                        : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                    }`}
+                    onClick={() => setActiveTab('import')}
+                  >
+                    <Upload className="w-5 h-5" />
+                    <span className="font-medium">Import</span>
+                  </button>
+
+                  <button
+                    className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-left transition-colors ${
+                      activeTab === 'save' 
+                        ? 'bg-cyan-600 text-white' 
+                        : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                    }`}
+                    onClick={() => setActiveTab('save')}
+                  >
+                    <Database className="w-5 h-5" />
+                    <span className="font-medium">Save & Share</span>
+                  </button>
+
+                  <button
+                    className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-left transition-colors ${
+                      activeTab === 'browse' 
+                        ? 'bg-cyan-600 text-white' 
+                        : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                    }`}
+                    onClick={() => setActiveTab('browse')}
+                  >
+                    <Globe className="w-5 h-5" />
+                    <span className="font-medium">Browse</span>
+                  </button>
+                </div>
+
+                {/* Quick Actions Section */}
+                <div className="mt-8 pt-4 border-t border-gray-800">
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Quick Actions</h3>
+                  <div className="space-y-2">
                     <button
-                      onClick={createNode}
-                      className="w-full bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-xl hover:shadow-cyan-500/30 flex items-center justify-center"
+                      onClick={createSampleData}
+                      className="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
                     >
-                      <Plus className="w-4 h-4 mr-2" /> Create Node
+                      <Database className="w-4 h-4" />
+                      <span>Sample Data</span>
                     </button>
-                  </div>
-
-                  {/* Create Relationship Section */}
-                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <h3 className="text-md font-semibold text-white mb-4 flex items-center">
-                      <Plus className="w-4 h-4 mr-2" />
-                      Create Relationship
-                    </h3>
-                    <label htmlFor="relType" className="block text-sm font-medium text-gray-300 mb-1">Type</label>
-                    <input
-                      type="text"
-                      id="relType"
-                      value={createForm.relType}
-                      onChange={(e) => setCreateForm({ ...createForm, relType: e.target.value })}
-                      placeholder="e.g., KNOWS, WORKS_AT"
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none mb-3"
-                    />
-
-                    <label htmlFor="sourceNode" className="block text-sm font-medium text-gray-300 mb-1">Source Node</label>
-                    <select
-                      id="sourceNode"
-                      value={createForm.sourceNodeId}
-                      onChange={(e) => setCreateForm({ ...createForm, sourceNodeId: e.target.value })}
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none mb-3"
-                    >
-                      <option value="">Select Source Node</option>
-                      {state.nodes.map(node => (
-                        <option key={node.id} value={node.id}>
-                          {String(node.properties.name || node.id)} ({node.type})
-                        </option>
-                      ))}
-                    </select>
-
-                    <label htmlFor="targetNode" className="block text-sm font-medium text-gray-300 mb-1">Target Node</label>
-                    <select
-                      id="targetNode"
-                      value={createForm.targetNodeId}
-                      onChange={(e) => setCreateForm({ ...createForm, targetNodeId: e.target.value })}
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none mb-3"
-                    >
-                      <option value="">Select Target Node</option>
-                      {state.nodes.map(node => (
-                        <option key={node.id} value={node.id}>
-                          {String(node.properties.name || node.id)} ({node.type})
-                        </option>
-                      ))}
-                    </select>
-
-                    <label htmlFor="relProps" className="block text-sm font-medium text-gray-300 mb-1">Properties (JSON)</label>
-                    <textarea
-                      id="relProps"
-                      value={createForm.relProps}
-                      onChange={(e) => setCreateForm({ ...createForm, relProps: e.target.value })}
-                      rows={2}
-                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none mb-3 resize-y"
-                      placeholder='{"since": "2023-01-01"}'
-                    ></textarea>
                     <button
-                      onClick={createRelationship}
-                      className="w-full bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-xl hover:shadow-cyan-500/30 flex items-center justify-center"
+                      onClick={analyzeGraph}
+                      className="w-full flex items-center space-x-3 px-3 py-2 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
                     >
-                      <Plus className="w-4 h-4 mr-2" /> Create Relationship
+                      <BarChart3 className="w-4 h-4" />
+                      <span>Run Analysis</span>
                     </button>
                   </div>
                 </div>
-              )}
+              </nav>
+            </aside>
 
-              {activeTab === 'query' && (
-                <div className="flex-1 overflow-y-auto pr-2">
-                  <h2 className="text-xl font-semibold mb-3 text-cyan-300">Graph Query (Cypher-like)</h2>
-                  <div className="h-48 mb-4 overflow-hidden rounded-lg border border-gray-700">
-                    <Editor
-                      height="200px"
-                      language="cypher"
-                      theme="vs-dark"
-                      value={queryText}
-                      onChange={(value) => setQueryText(value || '')}
-                      options={{
-                        minimap: { enabled: false },
-                        fontSize: 14,
-                        lineNumbers: 'on',
-                        wordWrap: 'on',
-                        scrollBeyondLastLine: false,
-                        fontFamily: 'Fira Code, monospace',
-                        fontLigatures: true,
-                        tabSize: 2,
-                        insertSpaces: true,
-                        automaticLayout: true,
-                        cursorBlinking: 'smooth',
-                        cursorStyle: 'line',
-                        lineHeight: 22,
-                      }}
-                    />
-                  </div>
-                  <button
-                    onClick={executeQuery}
-                    className="w-full bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-xl hover:shadow-cyan-500/30 flex items-center justify-center"
-                    disabled={state.isLoading}
-                  >
-                    {state.isLoading ? (
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    ) : (
-                      <Play className="w-4 h-4 mr-2" />
-                    )}
-                    Execute Query
-                  </button>
-
-                  {/* Query Results Section */}
-                  {state.queryResult && (
-                    <div className="space-y-4 mb-6">
-                      {/* Summary Section */}
-                      <div className="p-4 bg-gray-900 bg-opacity-70 rounded-lg border border-gray-700">
-                        <h3 className="text-white font-semibold mb-3 flex items-center">
-                          <BarChart3 className="w-5 h-5 mr-2 text-cyan-400" />
-                          Query Execution Summary
+            {/* Main Content Area */}
+            <div className="flex-1 flex">
+              {/* Active Panel Content */}
+              <div className="w-80 bg-gray-950 border-r border-gray-800 flex flex-col">
+                <div className="p-4 border-b border-gray-800">
+                  <h2 className="text-lg font-semibold text-white">
+                    {activeTab === 'create' && 'Create Elements'}
+                    {activeTab === 'query' && 'Graph Query'}
+                    {activeTab === 'stats' && 'Graph Analytics'}
+                    {activeTab === 'import' && 'Data Import'}
+                    {activeTab === 'save' && 'Save & Share'}
+                    {activeTab === 'browse' && 'Browse Graphs'}
+                  </h2>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-4">
+                  {activeTab === 'create' && (
+                    <div className="space-y-6">
+                      {/* Create Node Section */}
+                      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                        <h3 className="text-md font-semibold text-white mb-4 flex items-center">
+                          <Plus className="w-4 h-4 mr-2" />
+                          Create Node
                         </h3>
-                        
-                        <div className="grid grid-cols-2 gap-4 text-sm">
-                          <div>
-                            <span className="text-gray-400">Commands Executed:</span>
-                            <span className="text-cyan-400 font-medium ml-2">
-                              {getAggregationNumber(state.queryResult.aggregations, 'executedCommands', 0)}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-gray-400">Total Results:</span>
-                            <span className="text-green-400 font-medium ml-2">
-                              {state.queryResult.totalResults}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-gray-400">Execution Time:</span>
-                            <span className="text-purple-400 font-medium ml-2">
-                              {new Date(state.queryResult.executionTime).toLocaleTimeString()}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-gray-400">Status:</span>
-                            <span className={`font-medium ml-2 ${hasAggregationError(state.queryResult.aggregations) ? 'text-red-400' : 'text-green-400'}`}>
-                              {hasAggregationError(state.queryResult.aggregations) ? 'Error' : 'Success'}
-                            </span>
-                          </div>
-                        </div>
-
-                        {hasAggregationError(state.queryResult.aggregations) && (
-                          <div className="mt-4 p-3 bg-red-900 bg-opacity-50 border border-red-600 rounded">
-                            <h4 className="text-red-300 font-medium mb-2">Error Details:</h4>
-                            <p className="text-red-200 text-sm font-mono">
-                              {String(getAggregationValue(state.queryResult.aggregations, 'error'))}
-                            </p>
-                          </div>
-                        )}
+                        <label htmlFor="nodeType" className="block text-sm font-medium text-gray-300 mb-1">Type</label>
+                        <input
+                          type="text"
+                          id="nodeType"
+                          value={createForm.nodeType}
+                          onChange={(e) => setCreateForm({ ...createForm, nodeType: e.target.value })}
+                          placeholder="e.g., Person, Company"
+                          className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none mb-3"
+                        />
+                        <label htmlFor="nodeProps" className="block text-sm font-medium text-gray-300 mb-1">Properties (JSON)</label>
+                        <textarea
+                          id="nodeProps"
+                          value={createForm.nodeProps}
+                          onChange={(e) => setCreateForm({ ...createForm, nodeProps: e.target.value })}
+                          rows={3}
+                          className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none mb-3 resize-y"
+                          placeholder='{"name": "Jane Doe", "age": 42}'
+                        ></textarea>
+                        <button
+                          onClick={createNode}
+                          className="w-full bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-xl hover:shadow-cyan-500/30 flex items-center justify-center"
+                        >
+                          <Plus className="w-4 h-4 mr-2" /> Create Node
+                        </button>
                       </div>
 
-                      {/* Command Results Section */}
-                      {getCommands(state.queryResult.aggregations).length > 0 && (
-                        <div className="p-4 bg-gray-900 bg-opacity-70 rounded-lg border border-gray-700">
-                          <h3 className="text-white font-semibold mb-3 flex items-center">
-                            <FileText className="w-5 h-5 mr-2 text-green-400" />
-                            Command Results ({getCommands(state.queryResult.aggregations).length})
-                          </h3>
-                          
-                          <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
-                            {getCommands(state.queryResult.aggregations).map((cmd, index: number) => (
-                              <div key={index} className={`p-3 rounded border-l-4 ${
-                                cmd.success 
-                                  ? 'bg-green-900 bg-opacity-30 border-green-400' 
-                                  : 'bg-red-900 bg-opacity-30 border-red-400'
-                              }`}>
-                                {/* Command Header */}
-                                <div className="flex items-center justify-between mb-2">
-                                  <span className={`text-sm font-medium ${
-                                    cmd.success ? 'text-green-300' : 'text-red-300'
-                                  }`}>
-                                    {cmd.type} Command
-                                  </span>
-                                  <span className={`text-xs px-2 py-1 rounded ${
-                                    cmd.success 
-                                      ? 'bg-green-700 text-green-200' 
-                                      : 'bg-red-700 text-red-200'
-                                  }`}>
-                                    {cmd.success ? '✓ Success' : '✗ Failed'}
-                                  </span>
-                                </div>
+                      {/* Create Relationship Section */}
+                      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                        <h3 className="text-md font-semibold text-white mb-4 flex items-center">
+                          <Plus className="w-4 h-4 mr-2" />
+                          Create Relationship
+                        </h3>
+                        <label htmlFor="relType" className="block text-sm font-medium text-gray-300 mb-1">Type</label>
+                        <input
+                          type="text"
+                          id="relType"
+                          value={createForm.relType}
+                          onChange={(e) => setCreateForm({ ...createForm, relType: e.target.value })}
+                          placeholder="e.g., KNOWS, WORKS_AT"
+                          className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none mb-3"
+                        />
 
-                                {/* Original Command */}
-                                <div className="mb-3">
-                                  <span className="text-gray-400 text-xs block mb-1">Command:</span>
-                                  <code className="text-cyan-300 text-sm bg-gray-800 px-2 py-1 rounded font-mono block">
-                                    {cmd.command}
-                                  </code>
-                                </div>
+                        <label htmlFor="sourceNode" className="block text-sm font-medium text-gray-300 mb-1">Source Node</label>
+                        <select
+                          id="sourceNode"
+                          value={createForm.sourceNodeId}
+                          onChange={(e) => setCreateForm({ ...createForm, sourceNodeId: e.target.value })}
+                          className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none mb-3"
+                        >
+                          <option value="">Select Source Node</option>
+                          {state.nodes.map(node => (
+                            <option key={node.id} value={node.id}>
+                              {String(node.properties.name || node.id)} ({node.type})
+                            </option>
+                          ))}
+                        </select>
 
-                                {/* Results */}
-                                <div>
-                                  <span className="text-gray-400 text-xs block mb-1">Result:</span>
-                                  <div className="text-sm">
-                                    {(() => {
-                                      if (cmd.type === 'CREATE' && cmd.result && typeof cmd.result === 'object' && 'nodeId' in cmd.result) {
-                                        const createResult = cmd.result as CreateCommandResult;
-                                        return (
-                                          <div className="space-y-1">
-                                            <p className="text-white">
-                                              ✅ Created <span className="text-cyan-400 font-medium">{createResult.type}</span> node
-                                            </p>
-                                            <p className="text-gray-300">
-                                              ID: <span className="text-purple-300 font-mono">{createResult.nodeId}</span>
-                                            </p>
-                                            {Object.keys(createResult.properties || {}).length > 0 && (
-                                              <div>
-                                                <span className="text-gray-400">Properties:</span>
-                                                <div className="ml-4 mt-1">
-                                                  {Object.entries(createResult.properties || {}).map(([key, value]) => (
-                                                    <div key={key} className="text-gray-300 text-xs">
-                                                      <span className="text-orange-300">{key}:</span> <span className="text-white">{String(value)}</span>
-                                                    </div>
-                                                  ))}
-                                                </div>
-                                              </div>
-                                            )}
-                                          </div>
-                                        );
-                                      } else if (cmd.type === 'MATCH' && cmd.result && typeof cmd.result === 'object' && 'count' in cmd.result) {
-                                        const matchResult = cmd.result as MatchCommandResult;
-                                        return (
-                                          <div className="space-y-2">
-                                            <p className="text-white">
-                                              🔍 Matched <span className="text-cyan-400 font-medium">{matchResult.count}</span> items
-                                            </p>
-                                            <p className="text-gray-300">
-                                              Pattern: <span className="text-orange-300 font-mono">{matchResult.pattern}</span>
-                                            </p>
-                                            
-                                            {matchResult.matchedNodes && matchResult.matchedNodes.length > 0 && (
-                                              <div>
-                                                <span className="text-gray-400">Nodes ({matchResult.matchedNodes.length}):</span>
-                                                <div className="ml-4 mt-1 space-y-1">
-                                                  {matchResult.matchedNodes.slice(0, 5).map((node, nodeIndex: number) => (
-                                                    <div key={nodeIndex} className="text-xs">
-                                                      <span className="text-cyan-300">{node.type}</span>
-                                                      <span className="text-gray-400 mx-1">•</span>
-                                                      <span className="text-purple-300 font-mono">{node.id}</span>
-                                                      {Boolean(node.properties?.name) && (
-                                                        <>
-                                                          <span className="text-gray-400 mx-1">•</span>
-                                                          <span className="text-white">{String(node.properties.name)}</span>
-                                                        </>
-                                                      )}
-                                                    </div>
-                                                  ))}
-                                                  {matchResult.matchedNodes.length > 5 && (
-                                                    <div className="text-xs text-gray-500">
-                                                      ... and {matchResult.matchedNodes.length - 5} more
-                                                    </div>
-                                                  )}
-                                                </div>
-                                              </div>
-                                            )}
+                        <label htmlFor="targetNode" className="block text-sm font-medium text-gray-300 mb-1">Target Node</label>
+                        <select
+                          id="targetNode"
+                          value={createForm.targetNodeId}
+                          onChange={(e) => setCreateForm({ ...createForm, targetNodeId: e.target.value })}
+                          className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none mb-3"
+                        >
+                          <option value="">Select Target Node</option>
+                          {state.nodes.map(node => (
+                            <option key={node.id} value={node.id}>
+                              {String(node.properties.name || node.id)} ({node.type})
+                            </option>
+                          ))}
+                        </select>
 
-                                            {matchResult.matchedRelationships && matchResult.matchedRelationships.length > 0 && (
-                                              <div>
-                                                <span className="text-gray-400">Relationships ({matchResult.matchedRelationships.length}):</span>
-                                                <div className="ml-4 mt-1 space-y-1">
-                                                  {matchResult.matchedRelationships.slice(0, 5).map((rel, relIndex: number) => (
-                                                    <div key={relIndex} className="text-xs">
-                                                      <span className="text-cyan-300">{rel.sourceId}</span>
-                                                      <span className="text-purple-400 mx-1">-[{rel.type}]-&gt;</span>
-                                                      <span className="text-cyan-300">{rel.targetId}</span>
-                                                    </div>
-                                                  ))}
-                                                  {matchResult.matchedRelationships.length > 5 && (
-                                                    <div className="text-xs text-gray-500">
-                                                      ... and {matchResult.matchedRelationships.length - 5} more
-                                                    </div>
-                                                  )}
-                                                </div>
-                                              </div>
-                                            )}
-                                          </div>
-                                        );
-                                      } else if (cmd.type === 'CLEAR') {
-                                        return <p className="text-green-300">🧹 {String(cmd.result)}</p>;
-                                      } else if (cmd.type === 'UNKNOWN') {
-                                        return <p className="text-red-300">❌ {String(cmd.result)}</p>;
-                                      } else if (!cmd.success && typeof cmd.result === 'string') {
-                                        return <p className="text-red-300">❌ {cmd.result}</p>;
-                                      }
-                                      return null; // Default return if no conditions are met
-                                    })()}
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+                        {/* Inline message if either node is missing */}
+                        {(!createForm.sourceNodeId || !createForm.targetNodeId) && (
+                          <p className="text-xs text-yellow-400 mb-2">Please select both a source and target node to create a relationship.</p>
+                        )}
 
-                      {/* Current Graph State */}
-                      {state.queryResult && getGraphStatsFromAggregations(state.queryResult.aggregations) && (
-                        <div className="p-4 bg-gray-900 bg-opacity-70 rounded-lg border border-gray-700">
-                          <h3 className="text-white font-semibold mb-3 flex items-center">
-                            <Database className="w-5 h-5 mr-2 text-blue-400" />
-                            Current Graph State
-                          </h3>
-                          
-                          <div className="grid grid-cols-2 gap-4 text-sm">
-                            <div>
-                              <span className="text-gray-400">Total Nodes:</span>
-                              <span className="text-cyan-400 font-medium ml-2">
-                                {getGraphStatsFromAggregations(state.queryResult.aggregations)?.nodeCount || 0}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-gray-400">Total Relationships:</span>
-                              <span className="text-purple-400 font-medium ml-2">
-                                {getGraphStatsFromAggregations(state.queryResult.aggregations)?.relationshipCount || 0}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-gray-400">Node Types:</span>
-                              <span className="text-orange-400 font-medium ml-2">
-                                {Object.keys(getGraphStatsFromAggregations(state.queryResult.aggregations)?.nodeTypes || {}).length}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-gray-400">Relationship Types:</span>
-                              <span className="text-green-400 font-medium ml-2">
-                                {Object.keys(getGraphStatsFromAggregations(state.queryResult.aggregations)?.relationshipTypes || {}).length}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Download Results Section */}
-                      {!hasAggregationError(state.queryResult.aggregations) && (
-                        <div className="p-4 bg-gray-900 bg-opacity-70 rounded-lg border border-gray-700">
-                          <h3 className="text-white font-semibold mb-3 flex items-center">
-                            <Download className="w-5 h-5 mr-2 text-cyan-400" />
-                            Download Results
-                          </h3>
-                          <div className="grid grid-cols-2 gap-2">
-                            {downloadFormats.map(format => (
-                              <button
-                                key={format.type}
-                                onClick={() => downloadQueryResult(format.type)}
-                                className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded text-sm transition-colors flex items-center justify-center"
-                                title={format.description}
-                              >
-                                <Download className="w-3 h-3 mr-1" />
-                                {format.name}
-                              </button>
-                            ))}
-                          </div>
-                          <p className="text-xs text-gray-500 mt-2">
-                            Download query results or full graph in various formats
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Raw JSON Output */}
-                      {state.queryResult && (
-                      <details className="p-4 bg-gray-900 bg-opacity-70 rounded-lg border border-gray-700">
-                        <summary className="text-white font-semibold cursor-pointer hover:text-cyan-300 transition-colors">
-                          🔧 Raw JSON Output (Click to expand)
-                        </summary>
-                        <div className="mt-3 p-3 bg-gray-800 rounded border max-h-64 overflow-auto">
-                          <pre className="text-gray-300 text-xs whitespace-pre-wrap font-mono">
-                            {JSON.stringify(state.queryResult, null, 2)}
-                          </pre>
-                        </div>
-                      </details>
-                      )}
+                        <label htmlFor="relProps" className="block text-sm font-medium text-gray-300 mb-1">Properties (JSON)</label>
+                        <textarea
+                          id="relProps"
+                          value={createForm.relProps}
+                          onChange={(e) => setCreateForm({ ...createForm, relProps: e.target.value })}
+                          rows={2}
+                          className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none mb-3 resize-y"
+                          placeholder='{"since": "2023-01-01"}'
+                        ></textarea>
+                        <button
+                          onClick={createRelationship}
+                          className="w-full bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-xl hover:shadow-cyan-500/30 flex items-center justify-center"
+                          disabled={!createForm.sourceNodeId || !createForm.targetNodeId}
+                        >
+                          <Plus className="w-4 h-4 mr-2" /> Create Relationship
+                        </button>
+                      </div>
                     </div>
                   )}
 
-
-
-                  {/* Example Queries Section */}
-                  <div className="mt-6 p-4 border border-blue-700 rounded-lg bg-blue-900 bg-opacity-30">
-                    <h4 className="text-blue-300 font-medium mb-3">📚 Example Queries</h4>
-                    <div className="space-y-2 text-xs">
-                      <div>
-                        <button 
-                          onClick={() => setQueryText('CREATE (alice:Person {name: "Alice", age: 30})')}
-                          className="text-left w-full p-2 bg-gray-800 rounded hover:bg-gray-700 transition-colors"
-                        >
-                          <code className="text-cyan-300">CREATE (alice:Person {`{name: "Alice", age: 30}`})</code>
-                          <p className="text-gray-400 mt-1">Create a new person node</p>
-                        </button>
+                  {activeTab === 'query' && (
+                    <div className="flex-1 overflow-y-auto pr-2">
+                      <h2 className="text-xl font-semibold mb-3 text-cyan-300">Graph Query (Cypher-like)</h2>
+                      <div className="h-48 mb-4 overflow-hidden rounded-lg border border-gray-700">
+                        <Editor
+                          height="200px"
+                          language="cypher"
+                          theme="vs-dark"
+                          value={queryText}
+                          onChange={(value) => setQueryText(value || '')}
+                          options={{
+                            minimap: { enabled: false },
+                            fontSize: 14,
+                            lineNumbers: 'on',
+                            wordWrap: 'on',
+                            scrollBeyondLastLine: false,
+                            fontFamily: 'Fira Code, monospace',
+                            fontLigatures: true,
+                            tabSize: 2,
+                            insertSpaces: true,
+                            automaticLayout: true,
+                            cursorBlinking: 'smooth',
+                            cursorStyle: 'line',
+                            lineHeight: 22,
+                          }}
+                        />
                       </div>
-                      <div>
-                        <button 
-                          onClick={() => setQueryText('MATCH (p:Person) RETURN p')}
-                          className="text-left w-full p-2 bg-gray-800 rounded hover:bg-gray-700 transition-colors"
-                        >
-                          <code className="text-cyan-300">MATCH (p:Person) RETURN p</code>
-                          <p className="text-gray-400 mt-1">Find all person nodes</p>
-                        </button>
-                      </div>
-                      <div>
-                        <button 
-                          onClick={() => setQueryText('CREATE (company:Company {name: "TechCorp", founded: 2020})\nCREATE (product:Product {name: "SuperApp", version: "1.0"})')}
-                          className="text-left w-full p-2 bg-gray-800 rounded hover:bg-gray-700 transition-colors"
-                        >
-                          <code className="text-cyan-300">CREATE (company:Company {`{name: "TechCorp", founded: 2020}`})<br />CREATE (product:Product {`{name: "SuperApp", version: "1.0"}`})</code>
-                          <p className="text-gray-400 mt-1">Create company and product nodes</p>
-                        </button>
-                      </div>
-                      <div>
-                        <button 
-                          onClick={() => setQueryText('MATCH (c:Company) RETURN c')}
-                          className="text-left w-full p-2 bg-gray-800 rounded hover:bg-gray-700 transition-colors"
-                        >
-                          <code className="text-cyan-300">MATCH (c:Company) RETURN c</code>
-                          <p className="text-gray-400 mt-1">Find all company nodes</p>
-                        </button>
-                      </div>
-                      <div>
-                        <button 
-                          onClick={() => setQueryText('MATCH ()-[r:KNOWS]-() RETURN r')}
-                          className="text-left w-full p-2 bg-gray-800 rounded hover:bg-gray-700 transition-colors"
-                        >
-                          <code className="text-cyan-300">MATCH ()-[r:KNOWS]-() RETURN r</code>
-                          <p className="text-gray-400 mt-1">Find all KNOWS relationships</p>
-                        </button>
-                      </div>
-                      <div>
-                        <button 
-                          onClick={() => setQueryText('CREATE (alice:Person {name: "Alice", role: "Engineer"})\nCREATE (bob:Person {name: "Bob", role: "Designer"})\nCREATE (acme:Company {name: "ACME Corp", industry: "Tech"})')}
-                          className="text-left w-full p-2 bg-gray-800 rounded hover:bg-gray-700 transition-colors"
-                        >
-                          <code className="text-cyan-300">CREATE (alice:Person {`{name: "Alice", role: "Engineer"}`})<br />CREATE (bob:Person {`{name: "Bob", role: "Designer"}`})<br />CREATE (acme:Company {`{name: "ACME Corp", industry: "Tech"}`})</code>
-                          <p className="text-gray-400 mt-1">Create a complete team structure</p>
-                        </button>
-                      </div>
-                      <div>
-                        <button 
-                          onClick={() => setQueryText('CLEAR')}
-                          className="text-left w-full p-2 bg-gray-800 rounded hover:bg-gray-700 transition-colors"
-                        >
-                          <code className="text-red-300">CLEAR</code>
-                          <p className="text-gray-400 mt-1">Clear all graph data</p>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {activeTab === 'stats' && (
-                <div className="space-y-6">
-                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <h3 className="text-md font-semibold text-white mb-4">Overview</h3>
-                    <div className="space-y-2 text-sm">
-                      <p className="text-gray-300">Total Nodes: <span className="text-cyan-400 font-medium">{state.stats?.nodeCount || 0}</span></p>
-                      <p className="text-gray-300">Total Relationships: <span className="text-purple-400 font-medium">{state.stats?.relationshipCount || 0}</span></p>
-                      <p className="text-gray-300">Node Types: <span className="text-orange-400 font-medium">{Object.keys(state.stats?.nodeTypes || {}).length}</span></p>
-                      <p className="text-gray-300">Relationship Types: <span className="text-green-400 font-medium">{Object.keys(state.stats?.relationshipTypes || {}).length}</span></p>
-                    </div>
-                  </div>
-
-                  {/* Graph Analysis Section */}
-                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <h3 className="text-md font-semibold text-white mb-4 flex items-center">
-                      <TrendingUp className="w-4 h-4 mr-2" />
-                      Graph Analysis
-                    </h3>
-                    <div className="space-y-3">
                       <button
-                        onClick={analyzeGraph}
-                        className="w-full bg-gradient-to-r from-cyan-500 to-blue-500 text-white px-4 py-2 rounded-lg transition-all duration-300 hover:shadow-lg flex items-center justify-center"
-                        disabled={isAnalyzing || state.nodes.length === 0}
+                        onClick={executeQuery}
+                        className="w-full bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-xl hover:shadow-cyan-500/30 flex items-center justify-center"
+                        disabled={state.isLoading}
                       >
-                        {isAnalyzing ? (
+                        {state.isLoading ? (
                           <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                         ) : (
-                          <BarChart3 className="w-4 h-4 mr-2" />
+                          <Play className="w-4 h-4 mr-2" />
                         )}
-                        Analyze Graph Structure
+                        Execute Query
                       </button>
 
-                      {/* Path Analysis */}
-                      <div className="border-t border-gray-700 pt-3">
-                        <h4 className="text-white font-medium mb-2">Path Analysis</h4>
-                        <div className="space-y-2">
-                          <input
-                            type="text"
-                            placeholder="Source node ID"
-                            value={pathAnalysisForm.sourceId}
-                            onChange={(e) => setPathAnalysisForm({...pathAnalysisForm, sourceId: e.target.value})}
-                            className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm"
-                          />
-                          <input
-                            type="text"
-                            placeholder="Target node ID"
-                            value={pathAnalysisForm.targetId}
-                            onChange={(e) => setPathAnalysisForm({...pathAnalysisForm, targetId: e.target.value})}
-                            className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm"
-                          />
+                      {/* Query Results Section */}
+                      {state.queryResult && (
+                        <div className="space-y-4 mb-6">
+                          {/* Summary Section */}
+                          <div className="p-4 bg-gray-900 bg-opacity-70 rounded-lg border border-gray-700">
+                            <h3 className="text-white font-semibold mb-3 flex items-center">
+                              <BarChart3 className="w-5 h-5 mr-2 text-cyan-400" />
+                              Query Execution Summary
+                            </h3>
+                            
+                            <div className="grid grid-cols-2 gap-4 text-sm">
+                              <div>
+                                <span className="text-gray-400">Commands Executed:</span>
+                                <span className="text-cyan-400 font-medium ml-2">
+                                  {getAggregationNumber(state.queryResult.aggregations, 'executedCommands', 0)}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400">Total Results:</span>
+                                <span className="text-green-400 font-medium ml-2">
+                                  {state.queryResult.totalResults}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400">Execution Time:</span>
+                                <span className="text-purple-400 font-medium ml-2">
+                                  {new Date(state.queryResult.executionTime).toLocaleTimeString()}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400">Status:</span>
+                                <span className={`font-medium ml-2 ${hasAggregationError(state.queryResult.aggregations) ? 'text-red-400' : 'text-green-400'}`}>
+                                  {hasAggregationError(state.queryResult.aggregations) ? 'Error' : 'Success'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {hasAggregationError(state.queryResult.aggregations) && (
+                              <div className="mt-4 p-3 bg-red-900 bg-opacity-50 border border-red-600 rounded">
+                                <h4 className="text-red-300 font-medium mb-2">Error Details:</h4>
+                                <p className="text-red-200 text-sm font-mono">
+                                  {String(getAggregationValue(state.queryResult.aggregations, 'error'))}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Command Results Section */}
+                          {getCommands(state.queryResult.aggregations).length > 0 && (
+                            <div className="p-4 bg-gray-900 bg-opacity-70 rounded-lg border border-gray-700">
+                              <h3 className="text-white font-semibold mb-3 flex items-center">
+                                <FileText className="w-5 h-5 mr-2 text-green-400" />
+                                Command Results ({getCommands(state.queryResult.aggregations).length})
+                              </h3>
+                              
+                              <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
+                                {getCommands(state.queryResult.aggregations).map((cmd, index: number) => (
+                                  <div key={index} className={`p-3 rounded border-l-4 ${
+                                    cmd.success 
+                                      ? 'bg-green-900 bg-opacity-30 border-green-400' 
+                                      : 'bg-red-900 bg-opacity-30 border-red-400'
+                                  }`}>
+                                    {/* Command Header */}
+                                    <div className="flex items-center justify-between mb-2">
+                                      <span className={`text-sm font-medium ${
+                                        cmd.success ? 'text-green-300' : 'text-red-300'
+                                      }`}>
+                                        {cmd.type} Command
+                                      </span>
+                                      <span className={`text-xs px-2 py-1 rounded ${
+                                        cmd.success 
+                                          ? 'bg-green-700 text-green-200' 
+                                          : 'bg-red-700 text-red-200'
+                                      }`}>
+                                        {cmd.success ? '✓ Success' : '✗ Failed'}
+                                      </span>
+                                    </div>
+
+                                    {/* Original Command */}
+                                    <div className="mb-3">
+                                      <span className="text-gray-400 text-xs block mb-1">Command:</span>
+                                      <code className="text-cyan-300 text-sm bg-gray-800 px-2 py-1 rounded font-mono block">
+                                        {cmd.command}
+                                      </code>
+                                    </div>
+
+                                    {/* Results */}
+                                    <div>
+                                      <span className="text-gray-400 text-xs block mb-1">Result:</span>
+                                      <div className="text-sm">
+                                        {(() => {
+                                          if (cmd.type === 'CREATE' && cmd.result && typeof cmd.result === 'object' && 'nodeId' in cmd.result) {
+                                            const createResult = cmd.result as CreateCommandResult;
+                                            return (
+                                              <div className="space-y-1">
+                                                <p className="text-white">
+                                                  ✅ Created <span className="text-cyan-400 font-medium">{createResult.type}</span> node
+                                                </p>
+                                                <p className="text-gray-300">
+                                                  ID: <span className="text-purple-300 font-mono">{createResult.nodeId}</span>
+                                                </p>
+                                                {Object.keys(createResult.properties || {}).length > 0 && (
+                                                  <div>
+                                                    <span className="text-gray-400">Properties:</span>
+                                                    <div className="ml-4 mt-1">
+                                                      {Object.entries(createResult.properties || {}).map(([key, value]) => (
+                                                        <div key={key} className="text-gray-300 text-xs">
+                                                          <span className="text-orange-300">{key}:</span> <span className="text-white">{String(value)}</span>
+                                                        </div>
+                                                      ))}
+                                                    </div>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            );
+                                          } else if (cmd.type === 'MATCH' && cmd.result && typeof cmd.result === 'object' && 'count' in cmd.result) {
+                                            const matchResult = cmd.result as MatchCommandResult;
+                                            return (
+                                              <div className="space-y-2">
+                                                <p className="text-white">
+                                                  🔍 Matched <span className="text-cyan-400 font-medium">{matchResult.count}</span> items
+                                                </p>
+                                                <p className="text-gray-300">
+                                                  Pattern: <span className="text-orange-300 font-mono">{matchResult.pattern}</span>
+                                                </p>
+                                                
+                                                {matchResult.matchedNodes && matchResult.matchedNodes.length > 0 && (
+                                                  <div>
+                                                    <span className="text-gray-400">Nodes ({matchResult.matchedNodes.length}):</span>
+                                                    <div className="ml-4 mt-1 space-y-1">
+                                                      {matchResult.matchedNodes.slice(0, 5).map((node, nodeIndex: number) => (
+                                                        <div key={nodeIndex} className="text-xs">
+                                                          <span className="text-cyan-300">{node.type}</span>
+                                                          <span className="text-gray-400 mx-1">•</span>
+                                                          <span className="text-purple-300 font-mono">{node.id}</span>
+                                                          {Boolean(node.properties?.name) && (
+                                                            <>
+                                                              <span className="text-gray-400 mx-1">•</span>
+                                                              <span className="text-white">{String(node.properties.name)}</span>
+                                                            </>
+                                                          )}
+                                                        </div>
+                                                      ))}
+                                                      {matchResult.matchedNodes.length > 5 && (
+                                                        <div className="text-xs text-gray-500">
+                                                          ... and {matchResult.matchedNodes.length - 5} more
+                                                        </div>
+                                                      )}
+                                                    </div>
+                                                  </div>
+                                                )}
+
+                                                {matchResult.matchedRelationships && matchResult.matchedRelationships.length > 0 && (
+                                                  <div>
+                                                    <span className="text-gray-400">Relationships ({matchResult.matchedRelationships.length}):</span>
+                                                    <div className="ml-4 mt-1 space-y-1">
+                                                      {matchResult.matchedRelationships.slice(0, 5).map((rel, relIndex: number) => (
+                                                        <div key={relIndex} className="text-xs">
+                                                          <span className="text-cyan-300">{rel.sourceId}</span>
+                                                          <span className="text-purple-400 mx-1">-[{rel.type}]-&gt;</span>
+                                                          <span className="text-cyan-300">{rel.targetId}</span>
+                                                        </div>
+                                                      ))}
+                                                      {matchResult.matchedRelationships.length > 5 && (
+                                                        <div className="text-xs text-gray-500">
+                                                          ... and {matchResult.matchedRelationships.length - 5} more
+                                                        </div>
+                                                      )}
+                                                    </div>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            );
+                                          } else if (cmd.type === 'CLEAR') {
+                                            return <p className="text-green-300">🧹 {String(cmd.result)}</p>;
+                                          } else if (cmd.type === 'UNKNOWN') {
+                                            return <p className="text-red-300">❌ {String(cmd.result)}</p>;
+                                          } else if (!cmd.success && typeof cmd.result === 'string') {
+                                            return <p className="text-red-300">❌ {cmd.result}</p>;
+                                          }
+                                          return null; // Default return if no conditions are met
+                                        })()}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Current Graph State */}
+                          {state.queryResult && getGraphStatsFromAggregations(state.queryResult.aggregations) && (
+                            <div className="p-4 bg-gray-900 bg-opacity-70 rounded-lg border border-gray-700">
+                              <h3 className="text-white font-semibold mb-3 flex items-center">
+                                <Database className="w-5 h-5 mr-2 text-blue-400" />
+                                Current Graph State
+                              </h3>
+                              
+                              <div className="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                  <span className="text-gray-400">Total Nodes:</span>
+                                  <span className="text-cyan-400 font-medium ml-2">
+                                    {getGraphStatsFromAggregations(state.queryResult.aggregations)?.nodeCount || 0}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-400">Total Relationships:</span>
+                                  <span className="text-purple-400 font-medium ml-2">
+                                    {getGraphStatsFromAggregations(state.queryResult.aggregations)?.relationshipCount || 0}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-400">Node Types:</span>
+                                  <span className="text-orange-400 font-medium ml-2">
+                                    {Object.keys(getGraphStatsFromAggregations(state.queryResult.aggregations)?.nodeTypes || {}).length}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-400">Relationship Types:</span>
+                                  <span className="text-green-400 font-medium ml-2">
+                                    {Object.keys(getGraphStatsFromAggregations(state.queryResult.aggregations)?.relationshipTypes || {}).length}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Download Results Section */}
+                          {!hasAggregationError(state.queryResult.aggregations) && (
+                            <div className="p-4 bg-gray-900 bg-opacity-70 rounded-lg border border-gray-700">
+                              <h3 className="text-white font-semibold mb-3 flex items-center">
+                                <Download className="w-5 h-5 mr-2 text-cyan-400" />
+                                Download Results
+                              </h3>
+                              <div className="grid grid-cols-2 gap-2">
+                                {downloadFormats.map(format => (
+                                  <button
+                                    key={format.type}
+                                    onClick={() => downloadQueryResult(format.type)}
+                                    className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded text-sm transition-colors flex items-center justify-center"
+                                    title={format.description}
+                                  >
+                                    <Download className="w-3 h-3 mr-1" />
+                                    {format.name}
+                                  </button>
+                                ))}
+                              </div>
+                              <p className="text-xs text-gray-500 mt-2">
+                                Download query results or full graph in various formats
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Raw JSON Output */}
+                          {state.queryResult && (
+                          <details className="p-4 bg-gray-900 bg-opacity-70 rounded-lg border border-gray-700">
+                            <summary className="text-white font-semibold cursor-pointer hover:text-cyan-300 transition-colors">
+                              🔧 Raw JSON Output (Click to expand)
+                            </summary>
+                            <div className="mt-3 p-3 bg-gray-800 rounded border max-h-64 overflow-auto">
+                              <pre className="text-gray-300 text-xs whitespace-pre-wrap font-mono">
+                                {JSON.stringify(state.queryResult, null, 2)}
+                              </pre>
+                            </div>
+                          </details>
+                          )}
+                        </div>
+                      )}
+
+
+
+                      {/* Example Queries Section */}
+                      <div className="mt-6 p-4 border border-blue-700 rounded-lg bg-blue-900 bg-opacity-30">
+                        <h4 className="text-blue-300 font-medium mb-3">📚 Example Queries</h4>
+                        <div className="space-y-2 text-xs">
+                          <div>
+                            <button 
+                              onClick={() => setQueryText('CREATE (alice:Person {name: "Alice", age: 30})')}
+                              className="text-left w-full p-2 bg-gray-800 rounded hover:bg-gray-700 transition-colors"
+                            >
+                              <code className="text-cyan-300">CREATE (alice:Person {`{name: "Alice", age: 30}`})</code>
+                              <p className="text-gray-400 mt-1">Create a new person node</p>
+                            </button>
+                          </div>
+                          <div>
+                            <button 
+                              onClick={() => setQueryText('MATCH (p:Person) RETURN p')}
+                              className="text-left w-full p-2 bg-gray-800 rounded hover:bg-gray-700 transition-colors"
+                            >
+                              <code className="text-cyan-300">MATCH (p:Person) RETURN p</code>
+                              <p className="text-gray-400 mt-1">Find all person nodes</p>
+                            </button>
+                          </div>
+                          <div>
+                            <button 
+                              onClick={() => setQueryText('CREATE (company:Company {name: "TechCorp", founded: 2020})\nCREATE (product:Product {name: "SuperApp", version: "1.0"})')}
+                              className="text-left w-full p-2 bg-gray-800 rounded hover:bg-gray-700 transition-colors"
+                            >
+                              <code className="text-cyan-300">CREATE (company:Company {`{name: "TechCorp", founded: 2020}`})<br />CREATE (product:Product {`{name: "SuperApp", version: "1.0"}`})</code>
+                              <p className="text-gray-400 mt-1">Create company and product nodes</p>
+                            </button>
+                          </div>
+                          <div>
+                            <button 
+                              onClick={() => setQueryText('MATCH (c:Company) RETURN c')}
+                              className="text-left w-full p-2 bg-gray-800 rounded hover:bg-gray-700 transition-colors"
+                            >
+                              <code className="text-cyan-300">MATCH (c:Company) RETURN c</code>
+                              <p className="text-gray-400 mt-1">Find all company nodes</p>
+                            </button>
+                          </div>
+                          <div>
+                            <button 
+                              onClick={() => setQueryText('MATCH ()-[r:KNOWS]-() RETURN r')}
+                              className="text-left w-full p-2 bg-gray-800 rounded hover:bg-gray-700 transition-colors"
+                            >
+                              <code className="text-cyan-300">MATCH ()-[r:KNOWS]-() RETURN r</code>
+                              <p className="text-gray-400 mt-1">Find all KNOWS relationships</p>
+                            </button>
+                          </div>
+                          <div>
+                            <button 
+                              onClick={() => setQueryText('CREATE (alice:Person {name: "Alice", role: "Engineer"})\nCREATE (bob:Person {name: "Bob", role: "Designer"})\nCREATE (acme:Company {name: "ACME Corp", industry: "Tech"})')}
+                              className="text-left w-full p-2 bg-gray-800 rounded hover:bg-gray-700 transition-colors"
+                            >
+                              <code className="text-cyan-300">CREATE (alice:Person {`{name: "Alice", role: "Engineer"}`})<br />CREATE (bob:Person {`{name: "Bob", role: "Designer"}`})<br />CREATE (acme:Company {`{name: "ACME Corp", industry: "Tech"}`})</code>
+                              <p className="text-gray-400 mt-1">Create a complete team structure</p>
+                            </button>
+                          </div>
+                          <div>
+                            <button 
+                              onClick={() => setQueryText('CLEAR')}
+                              className="text-left w-full p-2 bg-gray-800 rounded hover:bg-gray-700 transition-colors"
+                            >
+                              <code className="text-red-300">CLEAR</code>
+                              <p className="text-gray-400 mt-1">Clear all graph data</p>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTab === 'stats' && (
+                    <div className="space-y-6">
+                      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                        <h3 className="text-md font-semibold text-white mb-4">Overview</h3>
+                        <div className="space-y-2 text-sm">
+                          <p className="text-gray-300">Total Nodes: <span className="text-cyan-400 font-medium">{state.stats?.nodeCount || 0}</span></p>
+                          <p className="text-gray-300">Total Relationships: <span className="text-purple-400 font-medium">{state.stats?.relationshipCount || 0}</span></p>
+                          <p className="text-gray-300">Node Types: <span className="text-orange-400 font-medium">{Object.keys(state.stats?.nodeTypes || {}).length}</span></p>
+                          <p className="text-gray-300">Relationship Types: <span className="text-green-400 font-medium">{Object.keys(state.stats?.relationshipTypes || {}).length}</span></p>
+                        </div>
+                      </div>
+
+                      {/* Graph Analysis Section */}
+                      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                        <h3 className="text-md font-semibold text-white mb-4 flex items-center">
+                          <TrendingUp className="w-4 h-4 mr-2" />
+                          Graph Analysis
+                        </h3>
+                        <div className="space-y-3">
                           <button
-                            onClick={analyzeShortestPath}
-                            className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-lg transition-all duration-300 hover:shadow-lg flex items-center justify-center text-sm"
-                            disabled={isAnalyzing || !pathAnalysisForm.sourceId || !pathAnalysisForm.targetId}
+                            onClick={analyzeGraph}
+                            className="w-full bg-gradient-to-r from-cyan-500 to-blue-500 text-white px-4 py-2 rounded-lg transition-all duration-300 hover:shadow-lg flex items-center justify-center"
+                            disabled={isAnalyzing || state.nodes.length === 0}
                           >
                             {isAnalyzing ? (
                               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                             ) : (
-                              <GitBranch className="w-4 h-4 mr-2" />
+                              <BarChart3 className="w-4 h-4 mr-2" />
                             )}
-                            Find Shortest Path
+                            Analyze Graph Structure
                           </button>
+
+                          {/* Path Analysis */}
+                          <div className="border-t border-gray-700 pt-3">
+                            <h4 className="text-white font-medium mb-2">Path Analysis</h4>
+                            <div className="space-y-2">
+                              <input
+                                type="text"
+                                placeholder="Source node ID"
+                                value={pathAnalysisForm.sourceId}
+                                onChange={(e) => setPathAnalysisForm({...pathAnalysisForm, sourceId: e.target.value})}
+                                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm"
+                              />
+                              <input
+                                type="text"
+                                placeholder="Target node ID"
+                                value={pathAnalysisForm.targetId}
+                                onChange={(e) => setPathAnalysisForm({...pathAnalysisForm, targetId: e.target.value})}
+                                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm"
+                              />
+                              <button
+                                onClick={analyzeShortestPath}
+                                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-lg transition-all duration-300 hover:shadow-lg flex items-center justify-center text-sm"
+                                disabled={isAnalyzing || !pathAnalysisForm.sourceId || !pathAnalysisForm.targetId}
+                              >
+                                {isAnalyzing ? (
+                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                ) : (
+                                  <GitBranch className="w-4 h-4 mr-2" />
+                                )}
+                                Find Shortest Path
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </div>
 
-                  {/* Analysis Results */}
-                  {analysisResult && (
-                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                      <h3 className="text-md font-semibold text-white mb-4 flex items-center">
-                        <BarChart3 className="w-4 h-4 mr-2" />
-                        Analysis Results
-                      </h3>
-                      
-                      {/* Centrality Results */}
-                      {analysisResult.centrality && (
-                        <div className="mb-4">
-                          <h4 className="text-white font-medium mb-2">Node Centrality (Top 5)</h4>
-                          <div className="space-y-1 text-sm">
-                            {analysisResult.centrality.slice(0, 5).map((node) => (
-                              <div key={node.nodeId} className="flex justify-between items-center">
-                                <span className="text-gray-300">{node.nodeId}</span>
-                                <span className="text-cyan-400 font-medium">Degree: {node.degree}</span>
+                      {/* Analysis Results */}
+                      {analysisResult && (
+                        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                          <h3 className="text-md font-semibold text-white mb-4 flex items-center">
+                            <BarChart3 className="w-4 h-4 mr-2" />
+                            Analysis Results
+                          </h3>
+                          
+                          {/* Centrality Results */}
+                          {analysisResult.centrality && (
+                            <div className="mb-4">
+                              <h4 className="text-white font-medium mb-2">Node Centrality (Top 5)</h4>
+                              <div className="space-y-1 text-sm">
+                                {analysisResult.centrality.slice(0, 5).map((node) => (
+                                  <div key={node.nodeId} className="flex justify-between items-center">
+                                    <span className="text-gray-300">{node.nodeId}</span>
+                                    <span className="text-cyan-400 font-medium">Degree: {node.degree}</span>
+                                  </div>
+                                ))}
                               </div>
-                            ))}
-                          </div>
+                            </div>
+                          )}
+
+                          {/* Connected Components */}
+                          {analysisResult.components && (
+                            <div className="mb-4">
+                              <h4 className="text-white font-medium mb-2">Connected Components</h4>
+                              <p className="text-gray-300 text-sm">
+                                Found <span className="text-orange-400 font-medium">{analysisResult.components.length}</span> connected components
+                              </p>
+                              <div className="space-y-1 text-sm max-h-32 overflow-y-auto">
+                                {analysisResult.components.map((component, i) => (
+                                  <div key={i} className="text-gray-400">
+                                    Component {i + 1}: {component.length} nodes
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* PageRank Results */}
+                          {analysisResult.pagerank && (
+                            <div className="mb-4">
+                              <h4 className="text-white font-medium mb-2">PageRank (Top 5)</h4>
+                              <div className="space-y-1 text-sm">
+                                {analysisResult.pagerank.slice(0, 5).map((node) => (
+                                  <div key={node.nodeId} className="flex justify-between items-center">
+                                    <span className="text-gray-300">{node.nodeId}</span>
+                                    <span className="text-purple-400 font-medium">PR: {node.pagerank?.toFixed(4) || 'N/A'}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Shortest Path Results */}
+                          {analysisResult.shortestPaths && (
+                            <div className="mb-4">
+                              <h4 className="text-white font-medium mb-2">Path Analysis</h4>
+                              <div className="space-y-2 text-sm">
+                                {analysisResult.shortestPaths.map((pathInfo, i) => (
+                                  <div key={i} className="bg-gray-800 p-2 rounded">
+                                    <div className="flex justify-between items-center mb-1">
+                                      <span className="text-gray-300">Path {i + 1}</span>
+                                      <span className="text-green-400 font-medium">Length: {pathInfo.length}</span>
+                                    </div>
+                                    <div className="text-gray-400 text-xs font-mono">
+                                      {pathInfo.path.join(' → ')}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
 
-                      {/* Connected Components */}
-                      {analysisResult.components && (
-                        <div className="mb-4">
-                          <h4 className="text-white font-medium mb-2">Connected Components</h4>
-                          <p className="text-gray-300 text-sm">
-                            Found <span className="text-orange-400 font-medium">{analysisResult.components.length}</span> connected components
-                          </p>
-                          <div className="space-y-1 text-sm max-h-32 overflow-y-auto">
-                            {analysisResult.components.map((component, i) => (
-                              <div key={i} className="text-gray-400">
-                                Component {i + 1}: {component.length} nodes
-                              </div>
-                            ))}
-                          </div>
+                      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                        <h3 className="text-md font-semibold text-white mb-4">Node Type Distribution</h3>
+                        <div className="space-y-1 text-sm">
+                          {state.stats?.nodeTypes && Object.entries(state.stats.nodeTypes).map(([type, count]) => (
+                            <p key={type} className="text-gray-300">{type}: <span className="text-cyan-400 font-medium">{count}</span></p>
+                          ))}
                         </div>
-                      )}
+                      </div>
 
-                      {/* PageRank Results */}
-                      {analysisResult.pagerank && (
-                        <div className="mb-4">
-                          <h4 className="text-white font-medium mb-2">PageRank (Top 5)</h4>
-                          <div className="space-y-1 text-sm">
-                            {analysisResult.pagerank.slice(0, 5).map((node) => (
-                              <div key={node.nodeId} className="flex justify-between items-center">
-                                <span className="text-gray-300">{node.nodeId}</span>
-                                <span className="text-purple-400 font-medium">PR: {node.pagerank?.toFixed(4) || 'N/A'}</span>
-                              </div>
-                            ))}
-                          </div>
+                      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                        <h3 className="text-md font-semibold text-white mb-4">Relationship Type Distribution</h3>
+                        <div className="space-y-1 text-sm">
+                          {state.stats?.relationshipTypes && Object.entries(state.stats.relationshipTypes).map(([type, count]) => (
+                            <p key={type} className="text-gray-300">{type}: <span className="text-purple-400 font-medium">{count}</span></p>
+                          ))}
                         </div>
-                      )}
-
-                      {/* Shortest Path Results */}
-                      {analysisResult.shortestPaths && (
-                        <div className="mb-4">
-                          <h4 className="text-white font-medium mb-2">Path Analysis</h4>
-                          <div className="space-y-2 text-sm">
-                            {analysisResult.shortestPaths.map((pathInfo, i) => (
-                              <div key={i} className="bg-gray-800 p-2 rounded">
-                                <div className="flex justify-between items-center mb-1">
-                                  <span className="text-gray-300">Path {i + 1}</span>
-                                  <span className="text-green-400 font-medium">Length: {pathInfo.length}</span>
-                                </div>
-                                <div className="text-gray-400 text-xs font-mono">
-                                  {pathInfo.path.join(' → ')}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+                      </div>
                     </div>
                   )}
 
-                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <h3 className="text-md font-semibold text-white mb-4">Node Type Distribution</h3>
-                    <div className="space-y-1 text-sm">
-                      {state.stats?.nodeTypes && Object.entries(state.stats.nodeTypes).map(([type, count]) => (
-                        <p key={type} className="text-gray-300">{type}: <span className="text-cyan-400 font-medium">{count}</span></p>
-                      ))}
-                    </div>
-                  </div>
+                  {activeTab === 'import' && (
+                    <div className="flex-1 overflow-y-auto pr-2">
+                      <h2 className="text-xl font-semibold mb-3 text-cyan-300">Import CSV/Excel Data</h2>
 
-                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <h3 className="text-md font-semibold text-white mb-4">Relationship Type Distribution</h3>
-                    <div className="space-y-1 text-sm">
-                      {state.stats?.relationshipTypes && Object.entries(state.stats.relationshipTypes).map(([type, count]) => (
-                        <p key={type} className="text-gray-300">{type}: <span className="text-purple-400 font-medium">{count}</span></p>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {activeTab === 'import' && (
-                <div className="flex-1 overflow-y-auto pr-2">
-                  <h2 className="text-xl font-semibold mb-3 text-cyan-300">Import CSV/Excel Data</h2>
-
-                  {/* File Upload Section */}
-                  <div className="mb-6 p-4 border border-gray-700 rounded-lg bg-gray-900 bg-opacity-50">
-                    <h3 className="text-lg font-medium mb-3 text-white flex items-center">
-                      <Upload className="w-5 h-5 mr-2" /> Upload File
-                    </h3>
-                    <div className="border-2 border-dashed border-gray-600 rounded-lg p-6 text-center">
-                      <div className="space-y-4">
-                        <Upload className="w-8 h-8 mx-auto text-gray-400" />
-                        <div>
-                          <p className="text-gray-300 mb-2">Upload CSV File</p>
-                          <input
-                            type="file"
-                            accept=".csv"
-                            onChange={handleFileUpload}
-                            className="block w-full text-sm text-gray-300 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-cyan-600 file:text-white hover:file:bg-cyan-700 file:cursor-pointer"
-                          />
-                        </div>
-                        <p className="text-gray-500 text-sm">Supports CSV files with headers</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Import Settings */}
-                  {csvData && (
-                    <div className="mb-6 p-4 border border-gray-700 rounded-lg bg-gray-900 bg-opacity-50">
-                      <h3 className="text-lg font-medium mb-3 text-white">Import Settings</h3>
-                      <div className="space-y-4">
-                        {/* Node Configuration */}
-                        <div>
-                          <label className="block text-sm font-medium text-gray-300 mb-2">Node Configuration</label>
-                          <div className="grid grid-cols-2 gap-3">
+                      {/* File Upload Section */}
+                      <div className="mb-6 p-4 border border-gray-700 rounded-lg bg-gray-900 bg-opacity-50">
+                        <h3 className="text-lg font-medium mb-3 text-white flex items-center">
+                          <Upload className="w-5 h-5 mr-2" /> Upload File
+                        </h3>
+                        <div className="border-2 border-dashed border-gray-600 rounded-lg p-6 text-center">
+                          <div className="space-y-4">
+                            <Upload className="w-8 h-8 mx-auto text-gray-400" />
                             <div>
-                              <label className="block text-xs text-gray-400 mb-1">Node Type Column</label>
-                              <select
-                                value={importSettings.nodeTypeColumn}
-                                onChange={(e) => {
-                                  const newSettings = { ...importSettings, nodeTypeColumn: e.target.value };
-                                  setImportSettings(newSettings);
-                                  if (csvData) generateImportPreview(csvData, newSettings);
-                                }}
-                                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
-                              >
-                                <option value="">Select column...</option>
-                                {(csvData.meta.fields || []).map((field) => (
-                                  <option key={field} value={field}>
-                                    {field}
-                                  </option>
-                                ))}
-                              </select>
+                              <p className="text-gray-300 mb-2">Upload CSV File</p>
+                              <input
+                                type="file"
+                                accept=".csv"
+                                onChange={handleFileUpload}
+                                className="block w-full text-sm text-gray-300 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-cyan-600 file:text-white hover:file:bg-cyan-700 file:cursor-pointer"
+                              />
                             </div>
-                            <div>
-                              <label className="block text-xs text-gray-400 mb-1">Node ID Column</label>
-                              <select
-                                value={importSettings.nodeIdColumn}
-                                onChange={(e) => {
-                                  const newSettings = { ...importSettings, nodeIdColumn: e.target.value };
-                                  setImportSettings(newSettings);
-                                  if (csvData) generateImportPreview(csvData, newSettings);
-                                }}
-                                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
-                              >
-                                <option value="">Select column...</option>
-                                {(csvData.meta.fields || []).map((field) => (
-                                  <option key={field} value={field}>
-                                    {field}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
+                            <p className="text-gray-500 text-sm">Supports CSV files with headers</p>
                           </div>
                         </div>
+                      </div>
 
-                        {/* Relationship Configuration */}
-                        <div>
-                          <label className="block text-sm font-medium text-gray-300 mb-2">Relationship Configuration</label>
-                          <div className="space-y-3">
-                            <select
-                              value={importSettings.relationshipMode}
-                              onChange={(e) => {
-                                const newSettings = { ...importSettings, relationshipMode: e.target.value as 'none' | 'sequential' | 'properties' };
-                                setImportSettings(newSettings);
-                                if (csvData) generateImportPreview(csvData, newSettings);
-                              }}
-                              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
-                            >
-                              <option value="none">No relationships</option>
-                              <option value="sequential">Sequential (each row connects to next)</option>
-                              <option value="properties">From columns (source/target)</option>
-                            </select>
+                      {/* Import Settings */}
+                      {csvData && (
+                        <div className="mb-6 p-4 border border-gray-700 rounded-lg bg-gray-900 bg-opacity-50">
+                          <h3 className="text-lg font-medium mb-3 text-white">Import Settings</h3>
+                          <div className="space-y-4">
+                            {/* Node Configuration */}
+                            <div>
+                              <label className="block text-sm font-medium text-gray-300 mb-2">Node Configuration</label>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="block text-xs text-gray-400 mb-1">Node Type Column</label>
+                                  <select
+                                    value={importSettings.nodeTypeColumn}
+                                    onChange={(e) => {
+                                      const newSettings = { ...importSettings, nodeTypeColumn: e.target.value };
+                                      setImportSettings(newSettings);
+                                      if (csvData) generateImportPreview(csvData, newSettings);
+                                    }}
+                                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
+                                  >
+                                    <option value="">Select column...</option>
+                                    {(csvData.meta.fields || []).map((field) => (
+                                      <option key={field} value={field}>
+                                        {field}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-gray-400 mb-1">Node ID Column</label>
+                                  <select
+                                    value={importSettings.nodeIdColumn}
+                                    onChange={(e) => {
+                                      const newSettings = { ...importSettings, nodeIdColumn: e.target.value };
+                                      setImportSettings(newSettings);
+                                      if (csvData) generateImportPreview(csvData, newSettings);
+                                    }}
+                                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
+                                  >
+                                    <option value="">Select column...</option>
+                                    {(csvData.meta.fields || []).map((field) => (
+                                      <option key={field} value={field}>
+                                        {field}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </div>
+                            </div>
 
-                            {importSettings.relationshipMode !== 'none' && (
-                              <>
-                                <input
-                                  type="text"
-                                  placeholder="Relationship type (e.g., RELATED_TO)"
-                                  value={importSettings.relationshipType}
+                            {/* Relationship Configuration */}
+                            <div>
+                              <label className="block text-sm font-medium text-gray-300 mb-2">Relationship Configuration</label>
+                              <div className="space-y-3">
+                                <select
+                                  value={importSettings.relationshipMode}
                                   onChange={(e) => {
-                                    const newSettings = { ...importSettings, relationshipType: e.target.value };
+                                    const newSettings = { ...importSettings, relationshipMode: e.target.value as 'none' | 'sequential' | 'properties' };
                                     setImportSettings(newSettings);
                                     if (csvData) generateImportPreview(csvData, newSettings);
                                   }}
                                   className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
+                                >
+                                  <option value="none">No relationships</option>
+                                  <option value="sequential">Sequential (each row connects to next)</option>
+                                  <option value="properties">From columns (source/target)</option>
+                                </select>
+
+                                {importSettings.relationshipMode !== 'none' && (
+                                  <>
+                                    <input
+                                      type="text"
+                                      placeholder="Relationship type (e.g., RELATED_TO)"
+                                      value={importSettings.relationshipType}
+                                      onChange={(e) => {
+                                        const newSettings = { ...importSettings, relationshipType: e.target.value };
+                                        setImportSettings(newSettings);
+                                        if (csvData) generateImportPreview(csvData, newSettings);
+                                      }}
+                                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
+                                    />
+
+                                    {importSettings.relationshipMode === 'properties' && (
+                                      <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                          <label className="block text-xs text-gray-400 mb-1">Source Column</label>
+                                          <select
+                                            value={importSettings.sourceColumn}
+                                            onChange={(e) => {
+                                              const newSettings = { ...importSettings, sourceColumn: e.target.value };
+                                              setImportSettings(newSettings);
+                                              if (csvData) generateImportPreview(csvData, newSettings);
+                                            }}
+                                            className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
+                                          >
+                                            <option value="">Select column...</option>
+                                            {(csvData.meta.fields || []).map((field) => (
+                                              <option key={field} value={field}>
+                                                {field}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                        <div>
+                                          <label className="block text-xs text-gray-400 mb-1">Target Column</label>
+                                          <select
+                                            value={importSettings.targetColumn}
+                                            onChange={(e) => {
+                                              const newSettings = { ...importSettings, targetColumn: e.target.value };
+                                              setImportSettings(newSettings);
+                                              if (csvData) generateImportPreview(csvData, newSettings);
+                                            }}
+                                            className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
+                                          >
+                                            <option value="">Select column...</option>
+                                            {(csvData.meta.fields || []).map((field) => (
+                                              <option key={field} value={field}>
+                                                {field}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Options */}
+                            <div>
+                              <label className="flex items-center text-sm text-gray-300">
+                                <input
+                                  type="checkbox"
+                                  checked={importSettings.skipFirstRow}
+                                  onChange={(e) => {
+                                    const newSettings = { ...importSettings, skipFirstRow: e.target.checked };
+                                    setImportSettings(newSettings);
+                                    if (csvData) generateImportPreview(csvData, newSettings);
+                                  }}
+                                  className="mr-2 h-4 w-4 text-cyan-400"
                                 />
-
-                                {importSettings.relationshipMode === 'properties' && (
-                                  <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                      <label className="block text-xs text-gray-400 mb-1">Source Column</label>
-                                      <select
-                                        value={importSettings.sourceColumn}
-                                        onChange={(e) => {
-                                          const newSettings = { ...importSettings, sourceColumn: e.target.value };
-                                          setImportSettings(newSettings);
-                                          if (csvData) generateImportPreview(csvData, newSettings);
-                                        }}
-                                        className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
-                                      >
-                                        <option value="">Select column...</option>
-                                        {(csvData.meta.fields || []).map((field) => (
-                                          <option key={field} value={field}>
-                                            {field}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </div>
-                                    <div>
-                                      <label className="block text-xs text-gray-400 mb-1">Target Column</label>
-                                      <select
-                                        value={importSettings.targetColumn}
-                                        onChange={(e) => {
-                                          const newSettings = { ...importSettings, targetColumn: e.target.value };
-                                          setImportSettings(newSettings);
-                                          if (csvData) generateImportPreview(csvData, newSettings);
-                                        }}
-                                        className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
-                                      >
-                                        <option value="">Select column...</option>
-                                        {(csvData.meta.fields || []).map((field) => (
-                                          <option key={field} value={field}>
-                                            {field}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </div>
-                                  </div>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Options */}
-                        <div>
-                          <label className="flex items-center text-sm text-gray-300">
-                            <input
-                              type="checkbox"
-                              checked={importSettings.skipFirstRow}
-                              onChange={(e) => {
-                                const newSettings = { ...importSettings, skipFirstRow: e.target.checked };
-                                setImportSettings(newSettings);
-                                if (csvData) generateImportPreview(csvData, newSettings);
-                              }}
-                              className="mr-2 h-4 w-4 text-cyan-400"
-                            />
-                            Skip first row (if not using headers)
-                          </label>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Preview Section */}
-                  {importPreview.nodes.length > 0 && (
-                    <div className="mb-6 p-4 border border-gray-700 rounded-lg bg-gray-900 bg-opacity-50">
-                      <h3 className="text-lg font-medium mb-3 text-white">Import Preview</h3>
-                      <div className="space-y-4">
-                        <div>
-                          <h4 className="text-cyan-300 font-medium mb-2">Nodes ({importPreview.nodes.length})</h4>
-                          <div className="bg-gray-800 rounded p-3 max-h-32 overflow-y-auto">
-                            {importPreview.nodes.slice(0, 5).map((node, idx) => (
-                              <div key={idx} className="text-xs text-gray-300 mb-1">
-                                <span className="text-cyan-400">{node.type}</span>: {node.id}
-                                {Object.keys(node.properties).length > 0 && (
-                                  <span className="text-gray-500 ml-2">({Object.keys(node.properties).join(', ')})</span>
-                                )}
-                              </div>
-                            ))}
-                            {importPreview.nodes.length > 5 && (
-                              <div className="text-xs text-gray-500">...and {importPreview.nodes.length - 5} more</div>
-                            )}
-                          </div>
-                        </div>
-                        {importPreview.relationships.length > 0 && (
-                          <div>
-                            <h4 className="text-purple-300 font-medium mb-2">Relationships ({importPreview.relationships.length})</h4>
-                            <div className="bg-gray-800 rounded p-3 max-h-32 overflow-y-auto">
-                              {importPreview.relationships.slice(0, 5).map((rel, idx) => (
-                                <div key={idx} className="text-xs text-gray-300 mb-1">
-                                  <span className="text-cyan-400">{rel.sourceId}</span>
-                                  <span className="text-purple-400 mx-2">-[{rel.type}]-&gt;</span>
-                                  <span className="text-cyan-400">{rel.targetId}</span>
-                                </div>
-                              ))}
-                              {importPreview.relationships.length > 5 && (
-                                <div className="text-xs text-gray-500">...and {importPreview.relationships.length - 5} more</div>
-                              )}
+                                Skip first row (if not using headers)
+                              </label>
                             </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Import Button and Status */}
-                  {csvData && (
-                    <div className="mb-6 p-4 border border-cyan-600 rounded-lg bg-cyan-900 bg-opacity-30">
-                      <h3 className="text-lg font-medium mb-3 text-cyan-300 flex items-center">
-                        <FileText className="w-5 h-5 mr-2" /> CSV Data Loaded
-                      </h3>
-                      <div className="space-y-3">
-                        <div className="text-sm text-gray-300">
-                          <span className="font-medium">File Info:</span> {csvData.data.length} rows, {csvData.meta.fields?.length || 0} columns
-                        </div>
-                        {csvData.meta.fields && (
-                          <div className="text-sm text-gray-300">
-                            <span className="font-medium">Columns:</span> {csvData.meta.fields.join(', ')}
-                          </div>
-                        )}
-                        {importPreview.nodes.length > 0 ? (
-                          <div className="bg-green-900 bg-opacity-50 border border-green-600 rounded p-3">
-                            <div className="text-green-300 font-medium mb-2">✅ Preview Generated</div>
-                            <div className="text-sm text-gray-300">
-                              Ready to import: <span className="text-cyan-400">{importPreview.nodes.length} nodes</span>
-                              {importPreview.relationships.length > 0 && (
-                                <span>, <span className="text-purple-400">{importPreview.relationships.length} relationships</span></span>
-                              )}
-                            </div>
-                            <button
-                              onClick={executeImport}
-                              disabled={isImporting}
-                              className="w-full bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg transition-all duration-300 hover:shadow-lg flex items-center justify-center mt-3 disabled:opacity-50"
-                            >
-                              {isImporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />} Import {importPreview.nodes.length} Nodes
-                              {importPreview.relationships.length > 0 && <span>&nbsp;&amp; {importPreview.relationships.length} Relationships</span>}
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="bg-yellow-900 bg-opacity-50 border border-yellow-600 rounded p-3">
-                            <div className="text-yellow-300 font-medium mb-2">⚠️ Configure Import Settings</div>
-                            <div className="text-sm text-gray-300 mb-3">Please configure the import settings above to generate a preview.</div>
-                            <button
-                              onClick={() => {
-                                if (csvData && importSettings.nodeTypeColumn && importSettings.nodeIdColumn) {
-                                  generateImportPreview(csvData, importSettings);
-                                } else {
-                                  showError('Please select node type and ID columns first');
-                                }
-                              }}
-                              className="w-full bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors flex items-center justify-center text-sm"
-                            >
-                              <Search className="w-4 h-4 mr-2" /> Generate Preview
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Legacy import button for backwards compatibility */}
-                  {importPreview.nodes.length > 0 && !csvData && (
-                    <div className="mb-4">
-                      <button
-                        onClick={executeImport}
-                        disabled={isImporting}
-                        className="w-full bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg transition-all duration-300 hover:shadow-lg flex items-center justify-center disabled:opacity-50"
-                      >
-                        {isImporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />} Import {importPreview.nodes.length} Nodes
-                        {importPreview.relationships.length > 0 && <span>&nbsp;&amp; {importPreview.relationships.length} Relationships</span>}
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Instructions */}
-                  <div className="p-4 border border-blue-700 rounded-lg bg-blue-900 bg-opacity-30">
-                    <h4 className="text-blue-300 font-medium mb-2">📋 How to Use CSV Import</h4>
-                    <div className="text-xs text-blue-200 space-y-1">
-                      <p>• <strong>Upload:</strong> Select a CSV file with column headers</p>
-                      <p>• <strong>Configure:</strong> Choose which columns represent node types, IDs, and relationships</p>
-                      <p>• <strong>Preview:</strong> Review the data that will be imported before proceeding</p>
-                      <p>• <strong>Import:</strong> Click the import button to add nodes and relationships to your graph</p>
-                      <p>• <strong>Relationships:</strong> Choose &apos;Sequential&apos; to connect each row to the next, or &apos;From columns&apos; to specify source/target columns</p>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {activeTab === 'save' && (
-                <div className="space-y-6">
-                  {/* Mode Switcher */}
-                  <div className="flex bg-gray-800 rounded-lg p-1">
-                    <button
-                      onClick={() => setEditMode('save')}
-                      className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                        editMode === 'save' ? 'bg-cyan-600 text-white' : 'text-gray-300 hover:text-white'
-                      }`}
-                    >
-                      Save New
-                    </button>
-                    <button
-                      onClick={() => setEditMode('update')}
-                      className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                        editMode === 'update' ? 'bg-cyan-600 text-white' : 'text-gray-300 hover:text-white'
-                      }`}
-                    >
-                      Update
-                    </button>
-                    <button
-                      onClick={() => setEditMode('share')}
-                      className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                        editMode === 'share' ? 'bg-cyan-600 text-white' : 'text-gray-300 hover:text-white'
-                      }`}
-                    >
-                      Share
-                    </button>
-                  </div>
-
-                  {state.savedGraphInfo && (
-                    <div className="bg-green-950 border border-green-800 rounded-lg p-4">
-                      <h3 className="text-md font-semibold text-green-300 mb-4 flex items-center">
-                        ✅ Graph Successfully Saved
-                      </h3>
-                      <div className="space-y-2 text-sm">
-                        <div>
-                          <span className="text-gray-300">Name:</span> 
-                          <span className="text-white font-medium ml-2">{state.savedGraphInfo.name}</span>
-                        </div>
-                        <div>
-                          <span className="text-gray-300">Blob ID:</span>
-                          <div className="flex items-center gap-2 mt-1">
-                            <div className="font-mono text-cyan-300 bg-gray-800 p-2 rounded flex-1 break-all">
-                              {state.savedGraphInfo.blobId}
-                            </div>
-                            <button
-                              onClick={() => copyToClipboard(state.savedGraphInfo!.blobId, 'blobId')}
-                              className="p-2 text-gray-400 hover:text-cyan-300 transition-colors"
-                              title="Copy Blob ID"
-                            >
-                              {copyStatus.blobId ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Save New Graph */}
-                  {editMode === 'save' && (
-                    <div className="space-y-4">
-                      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                        <h3 className="text-md font-semibold text-white mb-4 flex items-center">
-                          <Save className="w-4 h-4 mr-2" />
-                          Save Current Graph
-                        </h3>
-                        <div className="space-y-3">
-                          <div>
-                            <label htmlFor="graphName" className="block text-sm font-medium text-gray-300 mb-1">Graph Name</label>
-                            <input
-                              type="text"
-                              id="graphName"
-                              value={saveForm.name}
-                              onChange={(e) => setSaveForm({ ...saveForm, name: e.target.value })}
-                              placeholder="e.g., My Project Graph"
-                              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
-                            />
-                          </div>
-                          <div>
-                            <label htmlFor="graphDescription" className="block text-sm font-medium text-gray-300 mb-1">Description</label>
-                            <textarea
-                              id="graphDescription"
-                              value={saveForm.description}
-                              onChange={(e) => setSaveForm({ ...saveForm, description: e.target.value })}
-                              rows={3}
-                              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none mb-3 resize-y"
-                              placeholder="Enter a brief description of your graph"
-                            ></textarea>
-                          </div>
-                          <div>
-                            <label htmlFor="graphTags" className="block text-sm font-medium text-gray-300 mb-1">Tags</label>
-                            <input
-                              type="text"
-                              id="graphTags"
-                              value={saveForm.tags}
-                              onChange={(e) => setSaveForm({ ...saveForm, tags: e.target.value })}
-                              placeholder="e.g., graph, demo, analysis"
-                              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
-                            />
-                          </div>
-                          <div className="flex items-center">
-                            <input
-                              type="checkbox"
-                              id="isPublic"
-                              checked={saveForm.isPublic}
-                              onChange={(e) => setSaveForm({ ...saveForm, isPublic: e.target.checked })}
-                              className="w-4 h-4 text-cyan-400"
-                            />
-                            <label htmlFor="isPublic" className="ml-2 text-sm font-medium text-gray-300">Make this graph public</label>
-                          </div>
-                          <button
-                            onClick={saveGraph}
-                            className="w-full bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-xl hover:shadow-cyan-500/30 flex items-center justify-center"
-                            disabled={state.isLoading || !currentAccount}
-                          >
-                            {state.isLoading ? (
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            ) : (
-                              <Save className="w-4 h-4 mr-2" />
-                            )}
-                            Save Graph to Walrus
-                          </button>
-                          {!currentAccount && (
-                            <p className="text-red-400 text-xs">Connect your wallet to save graphs.</p>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                        <h3 className="text-md font-semibold text-white mb-4 flex items-center">
-                          <Download className="w-4 h-4 mr-2" />
-                          Load Graph from Walrus
-                        </h3>
-                        <div className="space-y-3">
-                          <div>
-                            <label htmlFor="loadBlobId" className="block text-sm font-medium text-gray-300 mb-1">Graph Blob ID</label>
-                            <input
-                              type="text"
-                              id="loadBlobId"
-                              value={loadForm.blobId}
-                              onChange={(e) => setLoadForm({ blobId: e.target.value })}
-                              placeholder="Paste Blob ID here"
-                              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
-                            />
-                          </div>
-                          <button
-                            onClick={() => {
-                              if (loadForm.blobId.trim()) {
-                                loadGraph(loadForm.blobId.trim());
-                                setLoadForm({ blobId: '' });
-                              }
-                            }}
-                            disabled={!loadForm.blobId.trim() || state.isLoading}
-                            className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-lg transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-xl hover:shadow-purple-500/30 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
-                          >
-                            {state.isLoading ? (
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            ) : (
-                              <Download className="w-4 h-4 mr-2" />
-                            )}
-                            Load Graph
-                          </button>
-                          <p className="text-sm text-gray-400">
-                            Enter a Blob ID and click the button to load the graph.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Update Existing Graph */}
-                  {editMode === 'update' && (
-                    <div className="space-y-4">
-                      {!selectedGraph ? (
-                        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                          <h3 className="text-md font-semibold text-white mb-4 flex items-center">
-                            <Edit className="w-4 h-4 mr-2" />
-                            Select Graph to Update
-                          </h3>
-                          <p className="text-gray-400 text-sm mb-3">
-                            Go to the Browse tab and select a graph you own to update its metadata here.
-                          </p>
-                          <button
-                            onClick={() => setActiveTab('browse')}
-                            className="w-full bg-gradient-to-r from-cyan-500 to-blue-500 text-white px-4 py-2 rounded-lg transition-all duration-300 hover:shadow-lg flex items-center justify-center"
-                          >
-                            <Globe className="w-4 h-4 mr-2" />
-                            Go to Browse Graphs
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                          <h3 className="text-md font-semibold text-white mb-4 flex items-center">
-                            <Edit className="w-4 h-4 mr-2" />
-                            Update: {selectedGraph.name}
-                          </h3>
-                          <div className="space-y-3">
-                            <div>
-                              <label htmlFor="updateGraphName" className="block text-sm font-medium text-gray-300 mb-1">Graph Name</label>
-                              <input
-                                type="text"
-                                id="updateGraphName"
-                                value={graphUpdateState.name}
-                                onChange={(e) => setGraphUpdateState({ ...graphUpdateState, name: e.target.value })}
-                                placeholder="e.g., My Project Graph"
-                                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
-                              />
-                            </div>
-                            <div>
-                              <label htmlFor="updateDescription" className="block text-sm font-medium text-gray-300 mb-1">Description</label>
-                              <textarea
-                                id="updateDescription"
-                                value={graphUpdateState.description}
-                                onChange={(e) => setGraphUpdateState({ ...graphUpdateState, description: e.target.value })}
-                                rows={3}
-                                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none mb-3 resize-y"
-                                placeholder="Enter a brief description of your graph"
-                              ></textarea>
-                            </div>
-                            <div>
-                              <label htmlFor="updateTags" className="block text-sm font-medium text-gray-300 mb-1">Tags</label>
-                              <input
-                                type="text"
-                                id="updateTags"
-                                value={graphUpdateState.tags}
-                                onChange={(e) => setGraphUpdateState({ ...graphUpdateState, tags: e.target.value })}
-                                placeholder="e.g., graph, demo, analysis"
-                                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
-                              />
-                            </div>
-                            <div className="flex items-center">
-                              <input
-                                type="checkbox"
-                                id="updateIsPublic"
-                                checked={graphUpdateState.isPublic}
-                                onChange={(e) => setGraphUpdateState({ ...graphUpdateState, isPublic: e.target.checked })}
-                                className="w-4 h-4 text-cyan-400"
-                              />
-                              <label htmlFor="updateIsPublic" className="ml-2 text-sm font-medium text-gray-300">Make this graph public</label>
-                            </div>
-                            <button
-                              onClick={updateGraphMetadata}
-                              className="w-full bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-2 rounded-lg transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-xl hover:shadow-green-500/30 flex items-center justify-center"
-                              disabled={graphUpdateState.isUpdating || !currentAccount}
-                            >
-                              {graphUpdateState.isUpdating ? (
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                              ) : (
-                                <RefreshCw className="w-4 h-4 mr-2" />
-                              )}
-                              Update Graph Metadata
-                            </button>
-                            <button
-                              onClick={() => setSelectedGraph(null)}
-                              className="w-full bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors"
-                            >
-                              Cancel
-                            </button>
-                            {!currentAccount && (
-                              <p className="text-red-400 text-xs">Connect your wallet to update graphs.</p>
-                            )}
                           </div>
                         </div>
                       )}
-                    </div>
-                  )}
 
-                  {/* Share Graph */}
-                  {editMode === 'share' && (
-                    <div className="space-y-4">
-                      {!selectedGraph ? (
-                        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                          <h3 className="text-md font-semibold text-white mb-4 flex items-center">
-                            <Share2 className="w-4 h-4 mr-2" />
-                            Select Graph to Share
-                          </h3>
-                          <p className="text-gray-400 text-sm mb-3">
-                            Go to the Browse tab and select a graph you own to share it with others.
-                          </p>
-                          <button
-                            onClick={() => setActiveTab('browse')}
-                            className="w-full bg-gradient-to-r from-cyan-500 to-blue-500 text-white px-4 py-2 rounded-lg transition-all duration-300 hover:shadow-lg flex items-center justify-center"
-                          >
-                            <Globe className="w-4 h-4 mr-2" />
-                            Go to Browse Graphs
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                          <h3 className="text-md font-semibold text-white mb-4 flex items-center">
-                            <Share2 className="w-4 h-4 mr-2" />
-                            Share: {selectedGraph.name}
-                          </h3>
-                          <div className="space-y-3">
+                      {/* Preview Section */}
+                      {importPreview.nodes.length > 0 && (
+                        <div className="mb-6 p-4 border border-gray-700 rounded-lg bg-gray-900 bg-opacity-50">
+                          <h3 className="text-lg font-medium mb-3 text-white">Import Preview</h3>
+                          <div className="space-y-4">
                             <div>
-                              <label htmlFor="recipientAddress" className="block text-sm font-medium text-gray-300 mb-1">Recipient Address</label>
-                              <input
-                                type="text"
-                                id="recipientAddress"
-                                value={shareState.recipientAddress}
-                                onChange={(e) => setShareState({ ...shareState, recipientAddress: e.target.value })}
-                                placeholder="Enter recipient's Sui address"
-                                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
-                              />
-                            </div>
-                            <button
-                              onClick={shareGraphWithUser}
-                              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-lg transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-xl hover:shadow-purple-500/30 flex items-center justify-center"
-                              disabled={shareState.isSharing || !currentAccount || !shareState.recipientAddress}
-                            >
-                              {shareState.isSharing ? (
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                              ) : (
-                                <Share2 className="w-4 h-4 mr-2" />
-                              )}
-                              Share Graph
-                            </button>
-                            <button
-                              onClick={() => setSelectedGraph(null)}
-                              className="w-full bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors"
-                            >
-                              Cancel
-                            </button>
-                            {!currentAccount && (
-                              <p className="text-red-400 text-xs">Connect your wallet to share graphs.</p>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {activeTab === 'browse' && (
-                <div className="space-y-6">
-                  {/* Network Status Indicator */}
-                  {state.error && (state.error.includes('network') || state.error.includes('connect') || state.error.includes('fetch')) && (
-                    <div className="bg-red-950 border border-red-800 rounded-lg p-4">
-                      <div className="flex items-center">
-                        <div className="w-3 h-3 bg-red-400 rounded-full mr-3 animate-pulse"></div>
-                        <div>
-                          <h4 className="text-red-300 font-medium">Network Connection Issue</h4>
-                          <p className="text-red-200 text-sm mt-1">{state.error}</p>
-                          <div className="mt-2 flex space-x-2">
-                            <button
-                              onClick={() => {
-                                loadPublicGraphs();
-                                if (currentAccount) loadMyGraphs();
-                              }}
-                              className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-sm"
-                              disabled={browseLoading}
-                            >
-                              {browseLoading ? 'Retrying...' : 'Retry Connection'}
-                            </button>
-                            <button
-                              onClick={() => setState(prev => ({ ...prev, error: null }))}
-                              className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white rounded text-sm"
-                            >
-                              Dismiss
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Public Graphs Section */}
-                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-md font-semibold text-white flex items-center">
-                        <Globe className="w-4 h-4 mr-2" />
-                        Public Graphs
-                      </h3>
-                      <button
-                        onClick={loadPublicGraphs}
-                        className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-sm flex items-center"
-                        disabled={browseLoading}
-                      >
-                        {browseLoading ? (
-                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                        ) : (
-                          <RefreshCw className="w-3 h-3 mr-1" />
-                        )}
-                        Refresh
-                      </button>
-                    </div>
-                    <p className="text-sm text-gray-400 mb-3">Explore public graphs shared by other users.</p>
-                    {browseLoading ? (
-                      <div className="flex items-center justify-center py-8">
-                        <Loader2 className="w-6 h-6 animate-spin text-cyan-400 mr-2" />
-                        <span className="text-gray-500">Loading public graphs...</span>
-                      </div>
-                    ) : browsedGraphs.public.length === 0 ? (
-                      <div className="text-center py-8 text-gray-500">
-                        <Globe className="w-8 h-8 mx-auto mb-2 text-gray-600" />
-                        <p>No public graphs found</p>
-                        {state.error && state.error.includes('network') && (
-                          <div className="mt-4">
-                            <p className="text-red-400 text-sm mb-2">Connection failed</p>
-                            <button
-                              onClick={loadPublicGraphs}
-                              className="px-3 py-1 bg-cyan-600 hover:bg-cyan-700 text-white rounded text-sm"
-                              disabled={browseLoading}
-                            >
-                              {browseLoading ? 'Retrying...' : 'Retry'}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {browsedGraphs.public.map(graph => (
-                          <div key={graph.id} className="bg-gray-800 border border-gray-700 rounded-lg p-3">
-                            <div className="flex justify-between items-start">
-                              <div className="flex-1">
-                                <h4 className="text-gray-200 font-medium">{graph.name}</h4>
-                                <p className="text-gray-400 text-sm mt-1">{graph.description}</p>
-                                <div className="flex items-center mt-2 text-xs text-gray-500">
-                                  <span>{graph.nodeCount} nodes</span>
-                                  <span className="mx-2">•</span>
-                                  <span>{graph.relationshipCount} relationships</span>
-                                  <span className="mx-2">•</span>
-                                  <span>v{graph.version}</span>
-                                </div>
-                                {graph.tags.length > 0 && (
-                                  <div className="flex flex-wrap gap-1 mt-2">
-                                    {graph.tags.map(tag => (
-                                      <span key={tag} className="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded">
-                                        {tag}
-                                      </span>
-                                    ))}
+                              <h4 className="text-cyan-300 font-medium mb-2">Nodes ({importPreview.nodes.length})</h4>
+                              <div className="bg-gray-800 rounded p-3 max-h-32 overflow-y-auto">
+                                {importPreview.nodes.slice(0, 5).map((node, idx) => (
+                                  <div key={idx} className="text-xs text-gray-300 mb-1">
+                                    <span className="text-cyan-400">{node.type}</span>: {node.id}
+                                    {Object.keys(node.properties).length > 0 && (
+                                      <span className="text-gray-500 ml-2">({Object.keys(node.properties).join(', ')})</span>
+                                    )}
                                   </div>
+                                ))}
+                                {importPreview.nodes.length > 5 && (
+                                  <div className="text-xs text-gray-500">...and {importPreview.nodes.length - 5} more</div>
                                 )}
                               </div>
-                              <div className="flex space-x-2 ml-3">
-                                <button
-                                  onClick={() => loadGraph(graph.blobId)}
-                                  className="p-2 text-gray-400 hover:text-cyan-300 transition-colors"
-                                  title="Load Graph"
-                                >
-                                  <Eye className="w-4 h-4" />
-                                </button>
-                                <button
-                                  onClick={() => loadGraphHistory(graph.id)}
-                                  className="p-2 text-gray-400 hover:text-cyan-300 transition-colors"
-                                  title="View History"
-                                >
-                                  <GitBranch className="w-4 h-4" />
-                                </button>
-                              </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* My Graphs Section */}
-                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-md font-semibold text-white flex items-center">
-                        <Users className="w-4 h-4 mr-2" />
-                        My Graphs
-                      </h3>
-                      <button
-                        onClick={loadMyGraphs}
-                        className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-sm flex items-center"
-                        disabled={browseLoading || !currentAccount}
-                      >
-                        {browseLoading ? (
-                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                        ) : (
-                          <RefreshCw className="w-3 h-3 mr-1" />
-                        )}
-                        Refresh
-                      </button>
-                    </div>
-                    {!currentAccount ? (
-                      <div className="text-center py-8 text-gray-500">
-                        <Users className="w-8 h-8 mx-auto mb-2 text-gray-600" />
-                        <p>Connect your wallet to view your graphs</p>
-                      </div>
-                    ) : browseLoading ? (
-                      <div className="flex items-center justify-center py-8">
-                        <Loader2 className="w-6 h-6 animate-spin text-cyan-400 mr-2" />
-                        <span className="text-gray-500">Loading your graphs...</span>
-                      </div>
-                    ) : browsedGraphs.owned.length === 0 ? (
-                      <div className="text-center py-8 text-gray-500">
-                        <FileText className="w-8 h-8 mx-auto mb-2 text-gray-600" />
-                        <p>You haven&apos;t created any graphs yet</p>
-                        {state.error && state.error.includes('network') && (
-                          <div className="mt-4">
-                            <p className="text-red-400 text-sm mb-2">Connection failed</p>
-                            <button
-                              onClick={loadMyGraphs}
-                              className="px-3 py-1 bg-cyan-600 hover:bg-cyan-700 text-white rounded text-sm"
-                              disabled={browseLoading}
-                            >
-                              {browseLoading ? 'Retrying...' : 'Retry'}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {browsedGraphs.owned.map(graph => (
-                          <div key={graph.id} className="bg-gray-800 border border-gray-700 rounded-lg p-3">
-                            <div className="flex justify-between items-start">
-                              <div className="flex-1">
-                                <h4 className="text-gray-200 font-medium">{graph.name}</h4>
-                                <p className="text-gray-400 text-sm mt-1">{graph.description}</p>
-                                <div className="flex items-center mt-2 text-xs text-gray-500">
-                                  <span>{graph.nodeCount} nodes</span>
-                                  <span className="mx-2">•</span>
-                                  <span>{graph.relationshipCount} relationships</span>
-                                  <span className="mx-2">•</span>
-                                  <span>v{graph.version}</span>
-                                  {graph.isPublic && (
-                                    <>
-                                      <span className="mx-2">•</span>
-                                      <span className="text-green-400">Public</span>
-                                    </>
+                            {importPreview.relationships.length > 0 && (
+                              <div>
+                                <h4 className="text-purple-300 font-medium mb-2">Relationships ({importPreview.relationships.length})</h4>
+                                <div className="bg-gray-800 rounded p-3 max-h-32 overflow-y-auto">
+                                  {importPreview.relationships.slice(0, 5).map((rel, idx) => (
+                                    <div key={idx} className="text-xs text-gray-300 mb-1">
+                                      <span className="text-cyan-400">{rel.sourceId}</span>
+                                      <span className="text-purple-400 mx-2">-[{rel.type}]-&gt;</span>
+                                      <span className="text-cyan-400">{rel.targetId}</span>
+                                    </div>
+                                  ))}
+                                  {importPreview.relationships.length > 5 && (
+                                    <div className="text-xs text-gray-500">...and {importPreview.relationships.length - 5} more</div>
                                   )}
                                 </div>
-                                {graph.tags.length > 0 && (
-                                  <div className="flex flex-wrap gap-1 mt-2">
-                                    {graph.tags.map(tag => (
-                                      <span key={tag} className="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded">
-                                        {tag}
-                                      </span>
-                                    ))}
-                                  </div>
-                                )}
                               </div>
-                              <div className="flex space-x-2 ml-3">
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Import Button and Status */}
+                      {csvData && (
+                        <div className="mb-6 p-4 border border-cyan-600 rounded-lg bg-cyan-900 bg-opacity-30">
+                          <h3 className="text-lg font-medium mb-3 text-cyan-300 flex items-center">
+                            <FileText className="w-5 h-5 mr-2" /> CSV Data Loaded
+                          </h3>
+                          <div className="space-y-3">
+                            <div className="text-sm text-gray-300">
+                              <span className="font-medium">File Info:</span> {csvData.data.length} rows, {csvData.meta.fields?.length || 0} columns
+                            </div>
+                            {csvData.meta.fields && (
+                              <div className="text-sm text-gray-300">
+                                <span className="font-medium">Columns:</span> {csvData.meta.fields.join(', ')}
+                              </div>
+                            )}
+                            {importPreview.nodes.length > 0 ? (
+                              <div className="bg-green-900 bg-opacity-50 border border-green-600 rounded p-3">
+                                <div className="text-green-300 font-medium mb-2">✅ Preview Generated</div>
+                                <div className="text-sm text-gray-300">
+                                  Ready to import: <span className="text-cyan-400">{importPreview.nodes.length} nodes</span>
+                                  {importPreview.relationships.length > 0 && (
+                                    <span>, <span className="text-purple-400">{importPreview.relationships.length} relationships</span></span>
+                                  )}
+                                </div>
                                 <button
-                                  onClick={() => loadGraph(graph.blobId)}
-                                  className="p-2 text-gray-400 hover:text-cyan-300 transition-colors"
-                                  title="Load Graph"
+                                  onClick={executeImport}
+                                  disabled={isImporting}
+                                  className="w-full bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg transition-all duration-300 hover:shadow-lg flex items-center justify-center mt-3 disabled:opacity-50"
                                 >
-                                  <Eye className="w-4 h-4" />
+                                  {isImporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />} Import {importPreview.nodes.length} Nodes
+                                  {importPreview.relationships.length > 0 && <span>&nbsp;&amp; {importPreview.relationships.length} Relationships</span>}
                                 </button>
+                              </div>
+                            ) : (
+                              <div className="bg-yellow-900 bg-opacity-50 border border-yellow-600 rounded p-3">
+                                <div className="text-yellow-300 font-medium mb-2">⚠️ Configure Import Settings</div>
+                                <div className="text-sm text-gray-300 mb-3">Please configure the import settings above to generate a preview.</div>
                                 <button
-                                  onClick={() => selectGraphForEdit(graph)}
-                                  className="p-2 text-gray-400 hover:text-cyan-300 transition-colors"
-                                  title="Edit Graph"
+                                  onClick={() => {
+                                    if (csvData && importSettings.nodeTypeColumn && importSettings.nodeIdColumn) {
+                                      generateImportPreview(csvData, importSettings);
+                                    } else {
+                                      showError('Please select node type and ID columns first');
+                                    }
+                                  }}
+                                  className="w-full bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors flex items-center justify-center text-sm"
                                 >
-                                  <Edit className="w-4 h-4" />
+                                  <Search className="w-4 h-4 mr-2" /> Generate Preview
                                 </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Legacy import button for backwards compatibility */}
+                      {importPreview.nodes.length > 0 && !csvData && (
+                        <div className="mb-4">
+                          <button
+                            onClick={executeImport}
+                            disabled={isImporting}
+                            className="w-full bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg transition-all duration-300 hover:shadow-lg flex items-center justify-center disabled:opacity-50"
+                          >
+                            {isImporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />} Import {importPreview.nodes.length} Nodes
+                            {importPreview.relationships.length > 0 && <span>&nbsp;&amp; {importPreview.relationships.length} Relationships</span>}
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Instructions */}
+                      <div className="p-4 border border-blue-700 rounded-lg bg-blue-900 bg-opacity-30">
+                        <h4 className="text-blue-300 font-medium mb-2">📋 How to Use CSV Import</h4>
+                        <div className="text-xs text-blue-200 space-y-1">
+                          <p>• <strong>Upload:</strong> Select a CSV file with column headers</p>
+                          <p>• <strong>Configure:</strong> Choose which columns represent node types, IDs, and relationships</p>
+                          <p>• <strong>Preview:</strong> Review the data that will be imported before proceeding</p>
+                          <p>• <strong>Import:</strong> Click the import button to add nodes and relationships to your graph</p>
+                          <p>• <strong>Relationships:</strong> Choose &apos;Sequential&apos; to connect each row to the next, or &apos;From columns&apos; to specify source/target columns</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTab === 'save' && (
+                    <div className="space-y-6">
+                      {/* Mode Switcher */}
+                      <div className="flex bg-gray-800 rounded-lg p-1">
+                        <button
+                          onClick={() => setEditMode('save')}
+                          className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                            editMode === 'save' ? 'bg-cyan-600 text-white' : 'text-gray-300 hover:text-white'
+                          }`}
+                        >
+                          Save New
+                        </button>
+                        <button
+                          onClick={() => setEditMode('update')}
+                          className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                            editMode === 'update' ? 'bg-cyan-600 text-white' : 'text-gray-300 hover:text-white'
+                          }`}
+                        >
+                          Update
+                        </button>
+                        <button
+                          onClick={() => setEditMode('share')}
+                          className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                            editMode === 'share' ? 'bg-cyan-600 text-white' : 'text-gray-300 hover:text-white'
+                          }`}
+                        >
+                          Share
+                        </button>
+                      </div>
+
+                      {state.savedGraphInfo && (
+                        <div className="bg-green-950 border border-green-800 rounded-lg p-4">
+                          <h3 className="text-md font-semibold text-green-300 mb-4 flex items-center">
+                            ✅ Graph Successfully Saved
+                          </h3>
+                          <div className="space-y-2 text-sm">
+                            <div>
+                              <span className="text-gray-300">Name:</span> 
+                              <span className="text-white font-medium ml-2">{state.savedGraphInfo.name}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-300">Blob ID:</span>
+                              <div className="flex items-center gap-2 mt-1">
+                                <div className="font-mono text-cyan-300 bg-gray-800 p-2 rounded flex-1 break-all">
+                                  {state.savedGraphInfo.blobId}
+                                </div>
                                 <button
-                                  onClick={() => selectGraphForShare(graph)}
+                                  onClick={() => copyToClipboard(state.savedGraphInfo!.blobId, 'blobId')}
                                   className="p-2 text-gray-400 hover:text-cyan-300 transition-colors"
-                                  title="Share Graph"
+                                  title="Copy Blob ID"
                                 >
-                                  <Share2 className="w-4 h-4" />
-                                </button>
-                                <button
-                                  onClick={() => loadGraphHistory(graph.id)}
-                                  className="p-2 text-gray-400 hover:text-cyan-300 transition-colors"
-                                  title="View History"
-                                >
-                                  <GitBranch className="w-4 h-4" />
+                                  {copyStatus.blobId ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
                                 </button>
                               </div>
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                        </div>
+                      )}
 
-                  {/* Search by Tag Section */}
-                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <h3 className="text-md font-semibold text-white mb-4 flex items-center">
-                      <Tag className="w-4 h-4 mr-2" />
-                      Search by Tag
-                    </h3>
-                    <div className="flex space-x-2 mb-3">
-                      <input
-                        type="text"
-                        placeholder="Enter tag name"
-                        value={searchTag}
-                        onChange={(e) => setSearchTag(e.target.value)}
-                        className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm"
-                      />
-                      <button
-                        onClick={() => loadGraphsByTag(searchTag)}
-                        className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm flex items-center"
-                        disabled={!searchTag.trim() || browseLoading}
-                      >
-                        <Search className="w-4 h-4 mr-1" />
-                        Search
-                      </button>
-                    </div>
-                    {Object.keys(browsedGraphs.byTag).length > 0 && (
-                      <div className="space-y-2">
-                        {Object.entries(browsedGraphs.byTag).map(([tag, graphs]) => (
-                          <div key={tag} className="bg-gray-800 border border-gray-700 rounded p-2">
-                            <h4 className="text-gray-300 font-medium">#{tag}</h4>
-                            <p className="text-gray-500 text-sm">{graphs.length} graphs</p>
+                      {/* Save New Graph */}
+                      {editMode === 'save' && (
+                        <div className="space-y-4">
+                          <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                            <h3 className="text-md font-semibold text-white mb-4 flex items-center">
+                              <Save className="w-4 h-4 mr-2" />
+                              Save Current Graph
+                            </h3>
+                            <div className="space-y-3">
+                              <div>
+                                <label htmlFor="graphName" className="block text-sm font-medium text-gray-300 mb-1">Graph Name</label>
+                                <input
+                                  type="text"
+                                  id="graphName"
+                                  value={saveForm.name}
+                                  onChange={(e) => setSaveForm({ ...saveForm, name: e.target.value })}
+                                  placeholder="e.g., My Project Graph"
+                                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label htmlFor="graphDescription" className="block text-sm font-medium text-gray-300 mb-1">Description</label>
+                                <textarea
+                                  id="graphDescription"
+                                  value={saveForm.description}
+                                  onChange={(e) => setSaveForm({ ...saveForm, description: e.target.value })}
+                                  rows={3}
+                                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none mb-3 resize-y"
+                                  placeholder="Enter a brief description of your graph"
+                                ></textarea>
+                              </div>
+                              <div>
+                                <label htmlFor="graphTags" className="block text-sm font-medium text-gray-300 mb-1">Tags</label>
+                                <input
+                                  type="text"
+                                  id="graphTags"
+                                  value={saveForm.tags}
+                                  onChange={(e) => setSaveForm({ ...saveForm, tags: e.target.value })}
+                                  placeholder="e.g., graph, demo, analysis"
+                                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
+                                />
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  id="isPublic"
+                                  checked={saveForm.isPublic}
+                                  onChange={(e) => setSaveForm({ ...saveForm, isPublic: e.target.checked })}
+                                  className="w-4 h-4 text-cyan-400"
+                                />
+                                <label htmlFor="isPublic" className="ml-2 text-sm font-medium text-gray-300">Make this graph public</label>
+                              </div>
+                              <button
+                                onClick={saveGraph}
+                                className="w-full bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-xl hover:shadow-cyan-500/30 flex items-center justify-center"
+                                disabled={state.isLoading || !currentAccount}
+                              >
+                                {state.isLoading ? (
+                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                ) : (
+                                  <Save className="w-4 h-4 mr-2" />
+                                )}
+                                Save Graph to Walrus
+                              </button>
+                              {!currentAccount && (
+                                <p className="text-red-400 text-xs">Connect your wallet to save graphs.</p>
+                              )}
+                            </div>
                           </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
 
-                  {/* Real-time Updates Toggle */}
-                  <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <h3 className="text-md font-semibold text-white mb-4 flex items-center">
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                      Real-time Updates
-                    </h3>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-gray-300 text-sm">Get notifications for new graphs and updates</p>
-                        <p className="text-gray-500 text-xs mt-1">Requires WebSocket connection to Sui network</p>
+                          <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                            <h3 className="text-md font-semibold text-white mb-4 flex items-center">
+                              <Download className="w-4 h-4 mr-2" />
+                              Load Graph from Walrus
+                            </h3>
+                            <div className="space-y-3">
+                              <div>
+                                <label htmlFor="loadBlobId" className="block text-sm font-medium text-gray-300 mb-1">Graph Blob ID</label>
+                                <input
+                                  type="text"
+                                  id="loadBlobId"
+                                  value={loadForm.blobId}
+                                  onChange={(e) => setLoadForm({ blobId: e.target.value })}
+                                  placeholder="Paste Blob ID here"
+                                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
+                                />
+                              </div>
+                              <button
+                                onClick={() => {
+                                  if (loadForm.blobId.trim()) {
+                                    loadGraph(loadForm.blobId.trim());
+                                    setLoadForm({ blobId: '' });
+                                  }
+                                }}
+                                disabled={!loadForm.blobId.trim() || state.isLoading}
+                                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-lg transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-xl hover:shadow-purple-500/30 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+                              >
+                                {state.isLoading ? (
+                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                ) : (
+                                  <Download className="w-4 h-4 mr-2" />
+                                )}
+                                Load Graph
+                              </button>
+                              <p className="text-sm text-gray-400">
+                                Enter a Blob ID and click the button to load the graph.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Update Existing Graph */}
+                      {editMode === 'update' && (
+                        <div className="space-y-4">
+                          {!selectedGraph ? (
+                            <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                              <h3 className="text-md font-semibold text-white mb-4 flex items-center">
+                                <Edit className="w-4 h-4 mr-2" />
+                                Select Graph to Update
+                              </h3>
+                              <p className="text-gray-400 text-sm mb-3">
+                                Go to the Browse tab and select a graph you own to update its metadata here.
+                              </p>
+                              <button
+                                onClick={() => setActiveTab('browse')}
+                                className="w-full bg-gradient-to-r from-cyan-500 to-blue-500 text-white px-4 py-2 rounded-lg transition-all duration-300 hover:shadow-lg flex items-center justify-center"
+                              >
+                                <Globe className="w-4 h-4 mr-2" />
+                                Go to Browse Graphs
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                              <h3 className="text-md font-semibold text-white mb-4 flex items-center">
+                                <Edit className="w-4 h-4 mr-2" />
+                                Update: {selectedGraph.name}
+                              </h3>
+                              <div className="space-y-3">
+                                <div>
+                                  <label htmlFor="updateGraphName" className="block text-sm font-medium text-gray-300 mb-1">Graph Name</label>
+                                  <input
+                                    type="text"
+                                    id="updateGraphName"
+                                    value={graphUpdateState.name}
+                                    onChange={(e) => setGraphUpdateState({ ...graphUpdateState, name: e.target.value })}
+                                    placeholder="e.g., My Project Graph"
+                                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
+                                  />
+                                </div>
+                                <div>
+                                  <label htmlFor="updateDescription" className="block text-sm font-medium text-gray-300 mb-1">Description</label>
+                                  <textarea
+                                    id="updateDescription"
+                                    value={graphUpdateState.description}
+                                    onChange={(e) => setGraphUpdateState({ ...graphUpdateState, description: e.target.value })}
+                                    rows={3}
+                                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none mb-3 resize-y"
+                                    placeholder="Enter a brief description of your graph"
+                                  ></textarea>
+                                </div>
+                                <div>
+                                  <label htmlFor="updateTags" className="block text-sm font-medium text-gray-300 mb-1">Tags</label>
+                                  <input
+                                    type="text"
+                                    id="updateTags"
+                                    value={graphUpdateState.tags}
+                                    onChange={(e) => setGraphUpdateState({ ...graphUpdateState, tags: e.target.value })}
+                                    placeholder="e.g., graph, demo, analysis"
+                                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
+                                  />
+                                </div>
+                                <div className="flex items-center">
+                                  <input
+                                    type="checkbox"
+                                    id="updateIsPublic"
+                                    checked={graphUpdateState.isPublic}
+                                    onChange={(e) => setGraphUpdateState({ ...graphUpdateState, isPublic: e.target.checked })}
+                                    className="w-4 h-4 text-cyan-400"
+                                  />
+                                  <label htmlFor="updateIsPublic" className="ml-2 text-sm font-medium text-gray-300">Make this graph public</label>
+                                </div>
+                                <button
+                                  onClick={updateGraphMetadata}
+                                  className="w-full bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-2 rounded-lg transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-xl hover:shadow-green-500/30 flex items-center justify-center"
+                                  disabled={graphUpdateState.isUpdating || !currentAccount}
+                                >
+                                  {graphUpdateState.isUpdating ? (
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                  ) : (
+                                    <RefreshCw className="w-4 h-4 mr-2" />
+                                  )}
+                                  Update Graph Metadata
+                                </button>
+                                <button
+                                  onClick={() => setSelectedGraph(null)}
+                                  className="w-full bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                                {!currentAccount && (
+                                  <p className="text-red-400 text-xs">Connect your wallet to update graphs.</p>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Share Graph */}
+                      {editMode === 'share' && (
+                        <div className="space-y-4">
+                          {!selectedGraph ? (
+                            <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                              <h3 className="text-md font-semibold text-white mb-4 flex items-center">
+                                <Share2 className="w-4 h-4 mr-2" />
+                                Select Graph to Share
+                              </h3>
+                              <p className="text-gray-400 text-sm mb-3">
+                                Go to the Browse tab and select a graph you own to share it with others.
+                              </p>
+                              <button
+                                onClick={() => setActiveTab('browse')}
+                                className="w-full bg-gradient-to-r from-cyan-500 to-blue-500 text-white px-4 py-2 rounded-lg transition-all duration-300 hover:shadow-lg flex items-center justify-center"
+                              >
+                                <Globe className="w-4 h-4 mr-2" />
+                                Go to Browse Graphs
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                              <h3 className="text-md font-semibold text-white mb-4 flex items-center">
+                                <Share2 className="w-4 h-4 mr-2" />
+                                Share: {selectedGraph.name}
+                              </h3>
+                              <div className="space-y-3">
+                                <div>
+                                  <label htmlFor="recipientAddress" className="block text-sm font-medium text-gray-300 mb-1">Recipient Address</label>
+                                  <input
+                                    type="text"
+                                    id="recipientAddress"
+                                    value={shareState.recipientAddress}
+                                    onChange={(e) => setShareState({ ...shareState, recipientAddress: e.target.value })}
+                                    placeholder="Enter recipient's Sui address"
+                                    className="w-full px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg transition-all duration-300 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 focus:outline-none"
+                                  />
+                                </div>
+                                <button
+                                  onClick={shareGraphWithUser}
+                                  className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-lg transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-xl hover:shadow-purple-500/30 flex items-center justify-center"
+                                  disabled={shareState.isSharing || !currentAccount || !shareState.recipientAddress}
+                                >
+                                  {shareState.isSharing ? (
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                  ) : (
+                                    <Share2 className="w-4 h-4 mr-2" />
+                                  )}
+                                  Share Graph
+                                </button>
+                                <button
+                                  onClick={() => setSelectedGraph(null)}
+                                  className="w-full bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                                {!currentAccount && (
+                                  <p className="text-red-400 text-xs">Connect your wallet to share graphs.</p>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {activeTab === 'browse' && (
+                    <div className="space-y-6">
+                      {/* Network Status Indicator */}
+                      {state.error && (state.error.includes('network') || state.error.includes('connect') || state.error.includes('fetch')) && (
+                        <div className="bg-red-950 border border-red-800 rounded-lg p-4">
+                          <div className="flex items-center">
+                            <div className="w-3 h-3 bg-red-400 rounded-full mr-3 animate-pulse"></div>
+                            <div>
+                              <h4 className="text-red-300 font-medium">Network Connection Issue</h4>
+                              <p className="text-red-200 text-sm mt-1">{state.error}</p>
+                              <div className="mt-2 flex space-x-2">
+                                <button
+                                  onClick={() => {
+                                    loadPublicGraphs();
+                                    if (currentAccount) loadMyGraphs();
+                                  }}
+                                  className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-sm"
+                                  disabled={browseLoading}
+                                >
+                                  {browseLoading ? 'Retrying...' : 'Retry Connection'}
+                                </button>
+                                <button
+                                  onClick={() => setState(prev => ({ ...prev, error: null }))}
+                                  className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white rounded text-sm"
+                                >
+                                  Dismiss
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Public Graphs Section */}
+                      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                        <div className="flex justify-between items-center mb-4">
+                          <h3 className="text-md font-semibold text-white flex items-center">
+                            <Globe className="w-4 h-4 mr-2" />
+                            Public Graphs
+                          </h3>
+                          <button
+                            onClick={loadPublicGraphs}
+                            className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-sm flex items-center"
+                            disabled={browseLoading}
+                          >
+                            {browseLoading ? (
+                              <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                            ) : (
+                              <RefreshCw className="w-3 h-3 mr-1" />
+                            )}
+                            Refresh
+                          </button>
+                        </div>
+                        <p className="text-sm text-gray-400 mb-3">Explore public graphs shared by other users.</p>
+                        {browseLoading ? (
+                          <div className="flex items-center justify-center py-8">
+                            <Loader2 className="w-6 h-6 animate-spin text-cyan-400 mr-2" />
+                            <span className="text-gray-500">Loading public graphs...</span>
+                          </div>
+                        ) : browsedGraphs.public.length === 0 ? (
+                          <div className="text-center py-8 text-gray-500">
+                            <Globe className="w-8 h-8 mx-auto mb-2 text-gray-600" />
+                            <p>No public graphs found</p>
+                            {state.error && state.error.includes('network') && (
+                              <div className="mt-4">
+                                <p className="text-red-400 text-sm mb-2">Connection failed</p>
+                                <button
+                                  onClick={loadPublicGraphs}
+                                  className="px-3 py-1 bg-cyan-600 hover:bg-cyan-700 text-white rounded text-sm"
+                                  disabled={browseLoading}
+                                >
+                                  {browseLoading ? 'Retrying...' : 'Retry'}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {browsedGraphs.public.map(graph => (
+                              <div key={graph.id} className="bg-gray-800 border border-gray-700 rounded-lg p-3">
+                                <div className="flex justify-between items-start">
+                                  <div className="flex-1">
+                                    <h4 className="text-gray-200 font-medium">{graph.name}</h4>
+                                    <p className="text-gray-400 text-sm mt-1">{graph.description}</p>
+                                    <div className="flex items-center mt-2 text-xs text-gray-500">
+                                      <span>{graph.nodeCount} nodes</span>
+                                      <span className="mx-2">•</span>
+                                      <span>{graph.relationshipCount} relationships</span>
+                                      <span className="mx-2">•</span>
+                                      <span>v{graph.version}</span>
+                                    </div>
+                                    {graph.tags.length > 0 && (
+                                      <div className="flex flex-wrap gap-1 mt-2">
+                                        {graph.tags.map(tag => (
+                                          <span key={tag} className="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded">
+                                            {tag}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="flex space-x-2 ml-3">
+                                    <button
+                                      onClick={() => loadGraph(graph.blobId)}
+                                      className="p-2 text-gray-400 hover:text-cyan-300 transition-colors"
+                                      title="Load Graph"
+                                    >
+                                      <Eye className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => loadGraphHistory(graph.id)}
+                                      className="p-2 text-gray-400 hover:text-cyan-300 transition-colors"
+                                      title="View History"
+                                    >
+                                      <GitBranch className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      <div className="flex items-center space-x-2">
+
+                      {/* My Graphs Section */}
+                      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                        <div className="flex justify-between items-center mb-4">
+                          <h3 className="text-md font-semibold text-white flex items-center">
+                            <Users className="w-4 h-4 mr-2" />
+                            My Graphs
+                          </h3>
+                          <button
+                            onClick={loadMyGraphs}
+                            className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-sm flex items-center"
+                            disabled={browseLoading || !currentAccount}
+                          >
+                            {browseLoading ? (
+                              <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                            ) : (
+                              <RefreshCw className="w-3 h-3 mr-1" />
+                            )}
+                            Refresh
+                          </button>
+                        </div>
+                        {!currentAccount ? (
+                          <div className="text-center py-8 text-gray-500">
+                            <Users className="w-8 h-8 mx-auto mb-2 text-gray-600" />
+                            <p>Connect your wallet to view your graphs</p>
+                          </div>
+                        ) : browseLoading ? (
+                          <div className="flex items-center justify-center py-8">
+                            <Loader2 className="w-6 h-6 animate-spin text-cyan-400 mr-2" />
+                            <span className="text-gray-500">Loading your graphs...</span>
+                          </div>
+                        ) : browsedGraphs.owned.length === 0 ? (
+                          <div className="text-center py-8 text-gray-500">
+                            <FileText className="w-8 h-8 mx-auto mb-2 text-gray-600" />
+                            <p>You haven&apos;t created any graphs yet</p>
+                            {state.error && state.error.includes('network') && (
+                              <div className="mt-4">
+                                <p className="text-red-400 text-sm mb-2">Connection failed</p>
+                                <button
+                                  onClick={loadMyGraphs}
+                                  className="px-3 py-1 bg-cyan-600 hover:bg-cyan-700 text-white rounded text-sm"
+                                  disabled={browseLoading}
+                                >
+                                  {browseLoading ? 'Retrying...' : 'Retry'}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {browsedGraphs.owned.map(graph => (
+                              <div key={graph.id} className="bg-gray-800 border border-gray-700 rounded-lg p-3">
+                                <div className="flex justify-between items-start">
+                                  <div className="flex-1">
+                                    <h4 className="text-gray-200 font-medium">{graph.name}</h4>
+                                    <p className="text-gray-400 text-sm mt-1">{graph.description}</p>
+                                    <div className="flex items-center mt-2 text-xs text-gray-500">
+                                      <span>{graph.nodeCount} nodes</span>
+                                      <span className="mx-2">•</span>
+                                      <span>{graph.relationshipCount} relationships</span>
+                                      <span className="mx-2">•</span>
+                                      <span>v{graph.version}</span>
+                                      {graph.isPublic && (
+                                        <>
+                                          <span className="mx-2">•</span>
+                                          <span className="text-green-400">Public</span>
+                                        </>
+                                      )}
+                                    </div>
+                                    {graph.tags.length > 0 && (
+                                      <div className="flex flex-wrap gap-1 mt-2">
+                                        {graph.tags.map(tag => (
+                                          <span key={tag} className="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded">
+                                            {tag}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="flex space-x-2 ml-3">
+                                    <button
+                                      onClick={() => loadGraph(graph.blobId)}
+                                      className="p-2 text-gray-400 hover:text-cyan-300 transition-colors"
+                                      title="Load Graph"
+                                    >
+                                      <Eye className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => selectGraphForEdit(graph)}
+                                      className="p-2 text-gray-400 hover:text-cyan-300 transition-colors"
+                                      title="Edit Graph"
+                                    >
+                                      <Edit className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => selectGraphForShare(graph)}
+                                      className="p-2 text-gray-400 hover:text-cyan-300 transition-colors"
+                                      title="Share Graph"
+                                    >
+                                      <Share2 className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => loadGraphHistory(graph.id)}
+                                      className="p-2 text-gray-400 hover:text-cyan-300 transition-colors"
+                                      title="View History"
+                                    >
+                                      <GitBranch className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Search by Tag Section */}
+                      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                        <h3 className="text-md font-semibold text-white mb-4 flex items-center">
+                          <Tag className="w-4 h-4 mr-2" />
+                          Search by Tag
+                        </h3>
+                        <div className="flex space-x-2 mb-3">
+                          <input
+                            type="text"
+                            placeholder="Enter tag name"
+                            value={searchTag}
+                            onChange={(e) => setSearchTag(e.target.value)}
+                            className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg text-sm"
+                          />
+                          <button
+                            onClick={() => loadGraphsByTag(searchTag)}
+                            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm flex items-center"
+                            disabled={!searchTag.trim() || browseLoading}
+                          >
+                            <Search className="w-4 h-4 mr-1" />
+                            Search
+                          </button>
+                        </div>
+                        {Object.keys(browsedGraphs.byTag).length > 0 && (
+                          <div className="space-y-2">
+                            {Object.entries(browsedGraphs.byTag).map(([tag, graphs]) => (
+                              <div key={tag} className="bg-gray-800 border border-gray-700 rounded p-2">
+                                <h4 className="text-gray-300 font-medium">#{tag}</h4>
+                                <p className="text-gray-500 text-sm">{graphs.length} graphs</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Real-time Updates Toggle */}
+                      <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                        <h3 className="text-md font-semibold text-white mb-4 flex items-center">
+                          <RefreshCw className="w-4 h-4 mr-2" />
+                          Real-time Updates
+                        </h3>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-gray-300 text-sm">Get notifications for new graphs and updates</p>
+                            <p className="text-gray-500 text-xs mt-1">Requires WebSocket connection to Sui network</p>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={enableRealTimeUpdates ? disableEventSubscription : enableEventSubscription}
+                              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                                enableRealTimeUpdates 
+                                  ? 'bg-red-600 hover:bg-red-700 text-white' 
+                                  : 'bg-green-600 hover:bg-green-700 text-white'
+                              }`}
+                              disabled={!currentAccount}
+                            >
+                              {enableRealTimeUpdates ? 'Disable' : 'Enable'}
+                            </button>
+                          </div>
+                        </div>
+                        {!currentAccount && (
+                          <p className="text-red-400 text-xs mt-2">Connect your wallet to enable real-time updates</p>
+                        )}
+                      </div>
+
+                      {/* Graph History Viewer */}
+                      {graphHistory.length > 0 && (
+                        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                          <h3 className="text-md font-semibold text-white mb-4 flex items-center">
+                            <GitBranch className="w-4 h-4 mr-2" />
+                            Graph History
+                          </h3>
+                          {historyLoading ? (
+                            <div className="flex items-center justify-center py-4">
+                              <Loader2 className="w-6 h-6 animate-spin text-cyan-400 mr-2" />
+                              <span className="text-gray-500">Loading history...</span>
+                            </div>
+                          ) : (
+                            <div className="space-y-3 max-h-64 overflow-y-auto">
+                              {graphHistory.map((entry, i) => (
+                                <div key={i} className="bg-gray-800 border border-gray-700 rounded p-3">
+                                  <div className="flex justify-between items-start">
+                                    <div>
+                                      <p className="text-gray-200 text-sm">{entry.changes}</p>
+                                      <div className="flex items-center mt-1 text-xs text-gray-500">
+                                        <span>{entry.eventType}</span>
+                                        <span className="mx-2">•</span>
+                                        <span>v{entry.version}</span>
+                                        <span className="mx-2">•</span>
+                                        <span>{new Date(entry.changedAt).toLocaleString()}</span>
+                                      </div>
+                                    </div>
+                                    <button
+                                      onClick={() => copyToClipboard(entry.transactionDigest, `tx-${i}`)}
+                                      className="p-1 text-gray-400 hover:text-cyan-300 transition-colors"
+                                      title="Copy Transaction ID"
+                                    >
+                                      {copyStatus[`tx-${i}`] ? 
+                                        <Check className="w-3 h-3 text-green-400" /> : 
+                                        <Copy className="w-3 h-3" />
+                                      }
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Saved Graphs Section */}
+                      {activeTab === 'browse' && (
+                        <div className="p-4">
+                          <h2 className="text-lg font-bold mb-2">Saved Graphs</h2>
+                          {(!Array.isArray(savedGraphs) || savedGraphs.length === 0) ? (
+                            <div className="text-gray-400">No saved graphs found.</div>
+                          ) : (
+                            <ul className="space-y-2">
+                              {(Array.isArray(savedGraphs) ? savedGraphs : []).map((g) => (
+                                <li key={g.graphId} className="border rounded p-2 flex items-center justify-between">
+                                  <div>
+                                    <div className="font-semibold">{g.name}</div>
+                                    <div className="text-xs text-gray-500">Blob ID: {g.blobId}</div>
+                                    <div className="text-xs text-gray-500">Saved: {new Date(g.timestamp).toLocaleString()}</div>
+                                  </div>
+                                  <div className="flex space-x-2">
+                                    <button
+                                      className="ml-4 px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                                      onClick={() => loadGraph(g.blobId)}
+                                    >
+                                      Load
+                                    </button>
+                                    <button
+                                      className="ml-2 px-2 py-1 bg-yellow-600 text-white rounded hover:bg-yellow-700"
+                                      onClick={() => setEditGraph({
+                                        graphId: g.graphId,
+                                        name: g.name,
+                                        description: g.description,
+                                        tags: Array.isArray(g.tags) ? g.tags.join(',') : ''
+                                      })}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      className="ml-2 px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700"
+                                      onClick={() => handleDeleteGraph(g.graphId)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Graph Visualization */}
+              <div ref={containerRef} className="flex-1 bg-gray-950 relative overflow-hidden">
+                {state.nodes.length === 0 && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-500">
+                    <Database className="w-12 h-12 mb-4 text-gray-600" />
+                    <div className="text-lg font-medium text-gray-400">No Graph Data</div>
+                    <div className="text-sm text-gray-500 mt-1">Create nodes or import data to get started</div>
+                  </div>
+                )}
+                <svg ref={svgRef} className="w-full h-full"></svg>
+              </div>
+
+              {/* Right Details Panel */}
+              <aside className="w-80 bg-gray-900 border-l border-gray-800 flex flex-col">
+                <div className="p-4 border-b border-gray-800">
+                  <h2 className="text-lg font-semibold text-white">Properties</h2>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-4">
+                  {state.selectedNode ? (
+                    <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+                      <h3 className="text-md font-semibold text-white mb-4 flex items-center">
+                        <Edit className="w-4 h-4 mr-2" />
+                        Node Details
+                      </h3>
+                      <div className="space-y-2 text-sm">
+                        <p className="text-gray-300">ID: <span className="font-mono text-purple-300">{state.selectedNode.id}</span></p>
+                        <p className="text-gray-300">Type: <span className="font-medium text-cyan-300">{state.selectedNode.type}</span></p>
+                        <div>
+                          <h4 className="text-white font-medium mt-3 mb-2">Properties:</h4>
+                          <pre className="bg-gray-800 p-3 rounded text-xs text-gray-200 overflow-auto max-h-32">
+                            {JSON.stringify(state.selectedNode.properties, null, 2)}
+                          </pre>
+                        </div>
                         <button
-                          onClick={enableRealTimeUpdates ? disableEventSubscription : enableEventSubscription}
-                          className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                            enableRealTimeUpdates 
-                              ? 'bg-red-600 hover:bg-red-700 text-white' 
-                              : 'bg-green-600 hover:bg-green-700 text-white'
-                          }`}
-                          disabled={!currentAccount}
+                          onClick={() => deleteNode(state.selectedNode!.id)}
+                          className="w-full bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center justify-center mt-4"
                         >
-                          {enableRealTimeUpdates ? 'Disable' : 'Enable'}
+                          <Trash2 className="w-4 h-4 mr-2" /> Delete Node
                         </button>
                       </div>
                     </div>
-                    {!currentAccount && (
-                      <p className="text-red-400 text-xs mt-2">Connect your wallet to enable real-time updates</p>
-                    )}
-                  </div>
-
-                  {/* Graph History Viewer */}
-                  {graphHistory.length > 0 && (
-                    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                  ) : state.selectedRelationship ? (
+                    <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
                       <h3 className="text-md font-semibold text-white mb-4 flex items-center">
-                        <GitBranch className="w-4 h-4 mr-2" />
-                        Graph History
+                        <Edit className="w-4 h-4 mr-2" />
+                        Relationship Details
                       </h3>
-                      {historyLoading ? (
-                        <div className="flex items-center justify-center py-4">
-                          <Loader2 className="w-6 h-6 animate-spin text-cyan-400 mr-2" />
-                          <span className="text-gray-500">Loading history...</span>
+                      <div className="space-y-2 text-sm">
+                        <p className="text-gray-300">ID: <span className="font-mono text-purple-300">{state.selectedRelationship.id}</span></p>
+                        <p className="text-gray-300">Type: <span className="font-medium text-cyan-300">{state.selectedRelationship.type}</span></p>
+                        <p className="text-gray-300">Source: <span className="font-mono text-orange-300">{state.selectedRelationship.sourceId}</span></p>
+                        <p className="text-gray-300">Target: <span className="font-mono text-orange-300">{state.selectedRelationship.targetId}</span></p>
+                        <div>
+                          <h4 className="text-white font-medium mt-3 mb-2">Properties:</h4>
+                          <pre className="bg-gray-800 p-3 rounded text-xs text-gray-200 overflow-auto max-h-32">
+                            {JSON.stringify(state.selectedRelationship.properties, null, 2)}
+                          </pre>
                         </div>
-                      ) : (
-                        <div className="space-y-3 max-h-64 overflow-y-auto">
-                          {graphHistory.map((entry, i) => (
-                            <div key={i} className="bg-gray-800 border border-gray-700 rounded p-3">
-                              <div className="flex justify-between items-start">
-                                <div>
-                                  <p className="text-gray-200 text-sm">{entry.changes}</p>
-                                  <div className="flex items-center mt-1 text-xs text-gray-500">
-                                    <span>{entry.eventType}</span>
-                                    <span className="mx-2">•</span>
-                                    <span>v{entry.version}</span>
-                                    <span className="mx-2">•</span>
-                                    <span>{new Date(entry.changedAt).toLocaleString()}</span>
-                                  </div>
-                                </div>
-                                <button
-                                  onClick={() => copyToClipboard(entry.transactionDigest, `tx-${i}`)}
-                                  className="p-1 text-gray-400 hover:text-cyan-300 transition-colors"
-                                  title="Copy Transaction ID"
-                                >
-                                  {copyStatus[`tx-${i}`] ? 
-                                    <Check className="w-3 h-3 text-green-400" /> : 
-                                    <Copy className="w-3 h-3" />
-                                  }
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                        <button
+                          onClick={() => deleteRelationship(state.selectedRelationship!.id)}
+                          className="w-full bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center justify-center mt-4"
+                        >
+                          <Trash2 className="w-4 h-4 mr-2" /> Delete Relationship
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-64 text-gray-500">
+                      <Search className="w-8 h-8 mb-3 text-gray-600" />
+                      <div className="text-center">
+                        <div className="font-medium text-gray-400">Select a Node or Relationship</div>
+                        <div className="text-sm text-gray-500 mt-1">Click on graph elements to view properties</div>
+                      </div>
                     </div>
                   )}
 
-                  {/* Saved Graphs Section */}
-                  {activeTab === 'browse' && (
-                    <div className="p-4">
-                      <h2 className="text-lg font-bold mb-2">Saved Graphs</h2>
-                      {(!Array.isArray(savedGraphs) || savedGraphs.length === 0) ? (
-                        <div className="text-gray-400">No saved graphs found.</div>
-                      ) : (
-                        <ul className="space-y-2">
-                          {(Array.isArray(savedGraphs) ? savedGraphs : []).map((g) => (
-                            <li key={g.graphId} className="border rounded p-2 flex items-center justify-between">
-                              <div>
-                                <div className="font-semibold">{g.name}</div>
-                                <div className="text-xs text-gray-500">Blob ID: {g.blobId}</div>
-                                <div className="text-xs text-gray-500">Saved: {new Date(g.timestamp).toLocaleString()}</div>
-                              </div>
-                              <div className="flex space-x-2">
-                                <button
-                                  className="ml-4 px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
-                                  onClick={() => loadGraph(g.blobId)}
-                                >
-                                  Load
-                                </button>
-                                <button
-                                  className="ml-2 px-2 py-1 bg-yellow-600 text-white rounded hover:bg-yellow-700"
-                                  onClick={() => setEditGraph({
-                                    graphId: g.graphId,
-                                    name: g.name,
-                                    description: g.description,
-                                    tags: Array.isArray(g.tags) ? g.tags.join(',') : ''
-                                  })}
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  className="ml-2 px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700"
-                                  onClick={() => handleDeleteGraph(g.graphId)}
-                                >
-                                  Delete
-                                </button>
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
+                  {state.error && (
+                    <div className="mt-4 bg-red-950 border border-red-800 rounded-lg p-4">
+                      <h3 className="font-medium text-red-400 mb-2">Error</h3>
+                      <p className="text-sm text-red-300">{state.error}</p>
                     </div>
                   )}
                 </div>
-              )}
+              </aside>
             </div>
           </div>
 
-          {/* Graph Visualization */}
-          <div ref={containerRef} className="flex-1 bg-gray-950 relative overflow-hidden">
-            {state.nodes.length === 0 && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-500">
-                <Database className="w-12 h-12 mb-4 text-gray-600" />
-                <div className="text-lg font-medium text-gray-400">No Graph Data</div>
-                <div className="text-sm text-gray-500 mt-1">Create nodes or import data to get started</div>
-              </div>
-            )}
-            <svg ref={svgRef} className="w-full h-full"></svg>
-          </div>
-
-          {/* Right Details Panel */}
-          <aside className="w-80 bg-gray-900 border-l border-gray-800 flex flex-col">
-            <div className="p-4 border-b border-gray-800">
-              <h2 className="text-lg font-semibold text-white">Properties</h2>
+          {/* Edit Graph Modal */}
+          {editGraph && (
+            <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+              <form className="bg-white rounded p-6 w-96" onSubmit={handleEditSubmit}>
+                <h2 className="text-lg font-bold mb-4">Edit Graph</h2>
+                <label className="block mb-2">Name
+                  <input className="w-full border rounded px-2 py-1" value={editGraph.name} onChange={e => setEditGraph(g => g && { ...g, name: e.target.value })} />
+                </label>
+                <label className="block mb-2">Description
+                  <input className="w-full border rounded px-2 py-1" value={editGraph.description} onChange={e => setEditGraph(g => g && { ...g, description: e.target.value })} />
+                </label>
+                <label className="block mb-4">Tags (comma separated)
+                  <input className="w-full border rounded px-2 py-1" value={editGraph.tags} onChange={e => setEditGraph(g => g && { ...g, tags: e.target.value })} />
+                </label>
+                <div className="flex justify-end space-x-2">
+                  <button type="button" className="px-3 py-1 bg-gray-300 rounded" onClick={() => setEditGraph(null)}>Cancel</button>
+                  <button type="submit" className="px-3 py-1 bg-blue-600 text-white rounded">Save</button>
+                </div>
+              </form>
             </div>
-            
-            <div className="flex-1 overflow-y-auto p-4">
-              {state.selectedNode ? (
-                <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
-                  <h3 className="text-md font-semibold text-white mb-4 flex items-center">
-                    <Edit className="w-4 h-4 mr-2" />
-                    Node Details
-                  </h3>
-                  <div className="space-y-2 text-sm">
-                    <p className="text-gray-300">ID: <span className="font-mono text-purple-300">{state.selectedNode.id}</span></p>
-                    <p className="text-gray-300">Type: <span className="font-medium text-cyan-300">{state.selectedNode.type}</span></p>
-                    <div>
-                      <h4 className="text-white font-medium mt-3 mb-2">Properties:</h4>
-                      <pre className="bg-gray-800 p-3 rounded text-xs text-gray-200 overflow-auto max-h-32">
-                        {JSON.stringify(state.selectedNode.properties, null, 2)}
-                      </pre>
-                    </div>
-                    <button
-                      onClick={() => deleteNode(state.selectedNode!.id)}
-                      className="w-full bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center justify-center mt-4"
-                    >
-                      <Trash2 className="w-4 h-4 mr-2" /> Delete Node
-                    </button>
-                  </div>
-                </div>
-              ) : state.selectedRelationship ? (
-                <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
-                  <h3 className="text-md font-semibold text-white mb-4 flex items-center">
-                    <Edit className="w-4 h-4 mr-2" />
-                    Relationship Details
-                  </h3>
-                  <div className="space-y-2 text-sm">
-                    <p className="text-gray-300">ID: <span className="font-mono text-purple-300">{state.selectedRelationship.id}</span></p>
-                    <p className="text-gray-300">Type: <span className="font-medium text-cyan-300">{state.selectedRelationship.type}</span></p>
-                    <p className="text-gray-300">Source: <span className="font-mono text-orange-300">{state.selectedRelationship.sourceId}</span></p>
-                    <p className="text-gray-300">Target: <span className="font-mono text-orange-300">{state.selectedRelationship.targetId}</span></p>
-                    <div>
-                      <h4 className="text-white font-medium mt-3 mb-2">Properties:</h4>
-                      <pre className="bg-gray-800 p-3 rounded text-xs text-gray-200 overflow-auto max-h-32">
-                        {JSON.stringify(state.selectedRelationship.properties, null, 2)}
-                      </pre>
-                    </div>
-                    <button
-                      onClick={() => deleteRelationship(state.selectedRelationship!.id)}
-                      className="w-full bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center justify-center mt-4"
-                    >
-                      <Trash2 className="w-4 h-4 mr-2" /> Delete Relationship
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center h-64 text-gray-500">
-                  <Search className="w-8 h-8 mb-3 text-gray-600" />
-                  <div className="text-center">
-                    <div className="font-medium text-gray-400">Select a Node or Relationship</div>
-                    <div className="text-sm text-gray-500 mt-1">Click on graph elements to view properties</div>
-                  </div>
-                </div>
-              )}
-
-              {state.error && (
-                <div className="mt-4 bg-red-950 border border-red-800 rounded-lg p-4">
-                  <h3 className="font-medium text-red-400 mb-2">Error</h3>
-                  <p className="text-sm text-red-300">{state.error}</p>
-                </div>
-              )}
-            </div>
-          </aside>
+          )}
         </div>
       </div>
-
-      {/* Edit Graph Modal */}
-      {editGraph && (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-          <form className="bg-white rounded p-6 w-96" onSubmit={handleEditSubmit}>
-            <h2 className="text-lg font-bold mb-4">Edit Graph</h2>
-            <label className="block mb-2">Name
-              <input className="w-full border rounded px-2 py-1" value={editGraph.name} onChange={e => setEditGraph(g => g && { ...g, name: e.target.value })} />
-            </label>
-            <label className="block mb-2">Description
-              <input className="w-full border rounded px-2 py-1" value={editGraph.description} onChange={e => setEditGraph(g => g && { ...g, description: e.target.value })} />
-            </label>
-            <label className="block mb-4">Tags (comma separated)
-              <input className="w-full border rounded px-2 py-1" value={editGraph.tags} onChange={e => setEditGraph(g => g && { ...g, tags: e.target.value })} />
-            </label>
-            <div className="flex justify-end space-x-2">
-              <button type="button" className="px-3 py-1 bg-gray-300 rounded" onClick={() => setEditGraph(null)}>Cancel</button>
-              <button type="submit" className="px-3 py-1 bg-blue-600 text-white rounded">Save</button>
-            </div>
-          </form>
-        </div>
-      )}
-    </div>
+    </>
   );
 }
