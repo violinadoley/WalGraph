@@ -1,0 +1,76 @@
+import { Request, Response, NextFunction } from 'express';
+import rateLimit from 'express-rate-limit';
+
+// Simple rate limiter for API endpoints
+export const apiRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // 100 requests per window
+  message: {
+    error: 'Too many requests from this IP',
+    code: 'RATE_LIMIT_EXCEEDED',
+    retryAfter: 900
+  },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Rate limiter for authentication endpoints
+export const authRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 attempts per window
+  message: {
+    error: 'Too many authentication attempts',
+    code: 'AUTH_RATE_LIMIT_EXCEEDED',
+    retryAfter: 900
+  },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Rate limiter for file uploads
+export const uploadRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10, // 10 uploads per hour
+  message: {
+    error: 'Too many file uploads',
+    code: 'UPLOAD_RATE_LIMIT_EXCEEDED',
+    retryAfter: 3600
+  },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Simple pass-through rate limiters for development
+export const organizationRateLimiter = async (req: Request, res: Response, next: NextFunction) => {
+  next();
+};
+
+export const userRateLimiter = async (req: Request, res: Response, next: NextFunction) => {
+  next();
+};
+
+// Graph operation rate limiting
+export const graphOperationRateLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // 30 graph operations per minute
+  message: {
+    error: 'Too many graph operations',
+    code: 'GRAPH_RATE_LIMIT_EXCEEDED',
+    retryAfter: 60
+  },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Query rate limiting
+export const queryRateLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 50, // 50 queries per minute
+  message: {
+    error: 'Too many queries',
+    code: 'QUERY_RATE_LIMIT_EXCEEDED',
+    retryAfter: 60
+  },
+  standardHeaders: true,
+  legacyHeaders: false
+}); 

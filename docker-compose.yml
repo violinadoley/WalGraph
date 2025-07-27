@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  # Frontend Editor
+  frontend:
+    build:
+      context: ./WalGraph-frontend-app
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_SUI_NETWORK=testnet
+      - NEXT_PUBLIC_WALRUS_AGGREGATOR_URL=https://walrus-testnet-aggregator.natsai.xyz
+      - NEXT_PUBLIC_WALRUS_PUBLISHER_URL=https://walrus-testnet-publisher.natsai.xyz
+      - NEXT_PUBLIC_PACKAGE_ID=0xe21c81834611d67b92751acb642d8b6587ce5da730cebace0d5f874015b92afa
+      - NEXT_PUBLIC_REGISTRY_ID=0xc09065c827a619ee2a3206017ddcd748ec89e4ac1520dbef57c2ef27e711d9fc
+    depends_on:
+      - api
+    networks:
+      - walgraph-network
+
+  # Enterprise API Server
+  api:
+    build:
+      context: ./api-server
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - SUI_NETWORK=testnet
+      - WALRUS_PUBLISHER_URL=https://walrus-testnet-publisher.natsai.xyz
+      - WALRUS_AGGREGATOR_URL=https://walrus-testnet-aggregator.natsai.xyz
+      - SUI_PACKAGE_ID=0xe21c81834611d67b92751acb642d8b6587ce5da730cebace0d5f874015b92afa
+      - SUI_REGISTRY_ID=0xc09065c827a619ee2a3206017ddcd748ec89e4ac1520dbef57c2ef27e711d9fc
+      # Add your actual secrets here or use environment variables
+      - SUI_RECOVERY_PHRASE=${SUI_RECOVERY_PHRASE}
+      - API_KEY_SECRET=${API_KEY_SECRET}
+      - JWT_SECRET=${JWT_SECRET}
+    networks:
+      - walgraph-network
+
+  # Redis (for API server caching and sessions)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - walgraph-network
+
+  # MongoDB (for API server data storage)
+  mongodb:
+    image: mongo:6
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - walgraph-network
+
+volumes:
+  redis-data:
+  mongo-data:
+
+networks:
+  walgraph-network:
+    driver: bridge 

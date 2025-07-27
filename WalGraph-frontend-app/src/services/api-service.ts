@@ -1,9 +1,9 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
-const API_KEY = process.env.NEXT_PUBLIC_API_KEY || 'supersecretkey123';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || 'enterprise-test-key-12345';
 
-export async function createGraph(graphData: any, userId: string) {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
-  const response = await fetch(`${API_BASE_URL}/api/graphs`, {
+export async function createGraph(graphData: Record<string, unknown>, userId: string) {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+  const response = await fetch(`${API_BASE_URL}/api/v1/graphs`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -15,12 +15,16 @@ export async function createGraph(graphData: any, userId: string) {
 }
 
 export async function getGraph(id: string) {
-  const response = await fetch(`${API_BASE_URL}/api/graphs/${id}`);
+  const response = await fetch(`${API_BASE_URL}/api/v1/graphs/${id}`, {
+    headers: {
+      'x-api-key': API_KEY,
+    },
+  });
   return response.json();
 }
 
-export async function updateGraph(id: string, graphData: any) {
-  const response = await fetch(`${API_BASE_URL}/api/graphs/${id}`, {
+export async function updateGraph(id: string, graphData: Record<string, unknown>) {
+  const response = await fetch(`${API_BASE_URL}/api/v1/graphs/${id}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -32,7 +36,7 @@ export async function updateGraph(id: string, graphData: any) {
 }
 
 export async function deleteGraph(id: string) {
-  const response = await fetch(`${API_BASE_URL}/api/graphs/${id}`, {
+  const response = await fetch(`${API_BASE_URL}/api/v1/graphs/${id}`, {
     method: 'DELETE',
     headers: {
       'x-api-key': API_KEY,
@@ -42,13 +46,21 @@ export async function deleteGraph(id: string) {
 }
 
 export async function listGraphs() {
-  const response = await fetch(`${API_BASE_URL}/api/graphs`);
+  const response = await fetch(`${API_BASE_URL}/api/v1/graphs`, {
+    headers: {
+      'x-api-key': API_KEY,
+    },
+  });
   return response.json();
 }
 
 export async function listSavedGraphs(userId: string) {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
-  const response = await fetch(`${API_BASE_URL}/api/graphs?userId=${encodeURIComponent(userId)}`);
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+  const response = await fetch(`${API_BASE_URL}/api/v1/graphs?userId=${encodeURIComponent(userId)}`, {
+    headers: {
+      'x-api-key': API_KEY,
+    },
+  });
   return response.json();
 }
 
@@ -60,8 +72,8 @@ export async function fetchGraphByBlobId(blobId: string) {
 }
 
 export async function deleteSavedGraph(graphId: string) {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
-  const response = await fetch(`${API_BASE_URL}/api/graphs/${graphId}`, {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+  const response = await fetch(`${API_BASE_URL}/api/v1/graphs/${graphId}`, {
     method: 'DELETE',
     headers: {
       'x-api-key': API_KEY,

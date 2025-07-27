@@ -49,7 +49,7 @@ import {
 import Link from 'next/link';
 import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
-import { createGraph, fetchGraphByBlobId, listSavedGraphs, deleteSavedGraph, updateGraph } from '@/services/api-service';
+// import { createGraph, fetchGraphByBlobId, listSavedGraphs, deleteSavedGraph, updateGraph } from '@/services/api-service';
 import OnboardingModal from '@/components/OnboardingModal';
 import type { SignAndExecuteFunction } from '@/services/sui-service';
 
@@ -186,9 +186,9 @@ interface D3Link {
   relationship: GraphRelationship;
 }
 
-interface TransactionParams {
-  transaction: unknown;
-}
+// interface TransactionParams {
+//   transaction: unknown;
+// }
 
 interface GraphAnalysisResult {
   centrality: Array<{ nodeId: string; degree: number; betweenness?: number; closeness?: number; pagerank?: number }>;
@@ -267,8 +267,8 @@ export default function GraphEditorPage() {
   const signAndExecute: SignAndExecuteFunction = (params) => {
     return new Promise<TransactionResult>((resolve, reject) => {
       console.log('🔄 Wallet: Executing transaction...', params);
-      // Cast params to TransactionParams since we know the structure
-      const transactionParams = params as any;
+      // Cast params to the expected structure
+      const transactionParams = params as { transaction: string | Transaction };
       signAndExecuteTransaction(
         {
           transaction: transactionParams.transaction,
@@ -1332,18 +1332,19 @@ export default function GraphEditorPage() {
       );
 
       // 3. (Optional) Notify backend for off-chain indexing
-      await createGraph({
-        name: saveForm.name,
-        description: saveForm.description,
-        nodeCount: state.nodes.length,
-        relationshipCount: state.relationships.length,
-        isPublic: saveForm.isPublic,
-        tags,
-        nodes: state.nodes,
-        relationships: state.relationships,
-        blobId,
-        graphId,
-      }, currentAccount.address);
+      // Commented out for now - frontend works independently with SUI/Walrus
+      // await createGraph({
+      //   name: saveForm.name,
+      //   description: saveForm.description,
+      //   nodeCount: state.nodes.length,
+      //   relationshipCount: state.relationships.length,
+      //   isPublic: saveForm.isPublic,
+      //   tags,
+      //   nodes: state.nodes,
+      //   relationships: state.relationships,
+      //   blobId,
+      //   graphId,
+      // }, currentAccount.address);
 
       showSuccess(`Graph saved on-chain! Graph ID: ${graphId}`);
       setState(prev => ({
@@ -1365,7 +1366,7 @@ export default function GraphEditorPage() {
   const loadGraph = async (blobId: string) => {
     try {
       setState(prev => ({ ...prev, isLoading: true }));
-      const data = await fetchGraphByBlobId(blobId);
+      const data = await walrusService.readGraph(blobId);
       setState(prev => ({
         ...prev,
         nodes: data.nodes || [],
@@ -2327,18 +2328,20 @@ export default function GraphEditorPage() {
   }, [eventSubscription]);
 
   // Fetch saved graphs when Browse tab is active
-  useEffect(() => {
-    if (activeTab === 'browse') {
-      listSavedGraphs(username || currentAccount?.address || 'defaultUser')
-        .then(data => setSavedGraphs(Array.isArray(data) ? data : []))
-        .catch(() => setSavedGraphs([]));
-    }
-  }, [activeTab, username, currentAccount]);
+  // Commented out - using SUI blockchain directly instead of API server
+  // useEffect(() => {
+  //   if (activeTab === 'browse') {
+  //     listSavedGraphs(username || currentAccount?.address || 'defaultUser')
+  //       .then(data => setSavedGraphs(Array.isArray(data) ? data : []))
+  //       .catch(() => setSavedGraphs([]));
+  //   }
+  // }, [activeTab, username, currentAccount]);
 
   // Delete a saved graph and update the list
   const handleDeleteGraph = async (graphId: string) => {
     try {
-      await deleteSavedGraph(graphId);
+      // Commented out - using SUI blockchain directly instead of API server
+      // await deleteSavedGraph(graphId);
       setSavedGraphs(prev => prev.filter(g => g.graphId !== graphId));
       showSuccess('Graph deleted');
     } catch (error) {
@@ -2347,28 +2350,29 @@ export default function GraphEditorPage() {
   };
 
   // Change user and refresh saved graphs
-  const handleChangeUser = () => {
-    const newUserId = prompt('Enter a new username:') || '';
-    if (newUserId) {
-      localStorage.setItem('walgraph_userId', newUserId);
-      // Refresh saved graphs for the new user
-      listSavedGraphs(newUserId).then(setSavedGraphs).catch(() => setSavedGraphs([]));
-      showSuccess(`Switched to user: ${newUserId}`);
-    }
-  };
+  // const handleChangeUser = () => {
+  //   const newUserId = prompt('Enter a new username:') || '';
+  //   if (newUserId) {
+  //     localStorage.setItem('walgraph_userId', newUserId);
+  //     // Refresh saved graphs for the new user
+  //     listSavedGraphs(newUserId).then(setSavedGraphs).catch(() => setSavedGraphs([]));
+  //     showSuccess(`Switched to user: ${newUserId}`);
+  //   }
+  // };
 
   // Handle edit form submit
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editGraph) return;
     try {
-      await updateGraph(editGraph.graphId, {
-        name: editGraph.name,
-        description: editGraph.description,
-        tags: editGraph.tags.split(',').map(t => t.trim()).filter(Boolean),
-      });
+      // Commented out - using SUI blockchain directly instead of API server
+      // await updateGraph(editGraph.graphId, {
+      //   name: editGraph.name,
+      //   description: editGraph.description,
+      //   tags: editGraph.tags.split(',').map(t => t.trim()).filter(Boolean),
+      // });
       setEditGraph(null);
-      listSavedGraphs(username || currentAccount?.address || 'defaultUser').then(setSavedGraphs).catch(() => setSavedGraphs([]));
+      // listSavedGraphs(username || currentAccount?.address || 'defaultUser').then(setSavedGraphs).catch(() => setSavedGraphs([]));
       showSuccess('Graph updated');
     } catch (error) {
       showError(`Failed to update graph: ${error}`);

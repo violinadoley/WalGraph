@@ -4,17 +4,18 @@
  * Module dependencies.
  */
 
-import app from '../app';
+import app from '../src/app';
 import debugLib from 'debug';
 import http from 'http';
+import env from '../src/config/environment';
 
-const debug = debugLib('api-server:server');
+const debug = debugLib('walgraph-enterprise-api:server');
 
 /**
  * Get port from environment and store in Express.
  */
 
-const port = normalizePort(process.env.PORT || '3000');
+const port = normalizePort(env.PORT);
 app.set('port', port);
 
 /**
@@ -35,8 +36,8 @@ server.on('listening', onListening);
  * Normalize a port into a number, string, or false.
  */
 
-function normalizePort(val) {
-  const port = parseInt(val, 10);
+function normalizePort(val: string | number): number | string | false {
+  const port = parseInt(val.toString(), 10);
   if (isNaN(port)) {
     return val;
   }
@@ -50,7 +51,7 @@ function normalizePort(val) {
  * Event listener for HTTP server "error" event.
  */
 
-function onError(error) {
+function onError(error: NodeJS.ErrnoException) {
   if (error.syscall !== 'listen') {
     throw error;
   }
@@ -81,4 +82,7 @@ function onListening() {
     ? 'pipe ' + addr
     : addr && addr.port;
   debug('Listening on ' + bind);
+  console.log(`🚀 WalGraph Enterprise API running on port ${port}`);
+  console.log(`📖 API Documentation: http://localhost:${port}/docs`);
+  console.log(`🏥 Health Check: http://localhost:${port}/health`);
 }
